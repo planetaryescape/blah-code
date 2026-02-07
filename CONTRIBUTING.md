@@ -59,6 +59,7 @@ Auth options:
 Run before opening PR:
 
 ```bash
+bun run lint
 bun run typecheck
 bun run test
 ```

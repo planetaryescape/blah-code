@@ -80,6 +80,7 @@ Docs:
 ## quality checks
 
 ```bash
+bun run lint
 bun run typecheck
 bun run test
 ```

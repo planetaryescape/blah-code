@@ -10,10 +10,14 @@
   "scripts": {
     "dev": "bun run --filter '@blah-code/cli' dev",
     "dev:daemon": "bun run --filter '@blah-code/daemon' dev",
+    "lint": "biome lint apps packages --files-ignore-unknown=true --diagnostic-level=error",
     "typecheck": "bun run --workspaces typecheck",
-    "test": "bun run --workspaces test"
+    "test": "bun run --workspaces test",
+    "build": "bun run apps/cli/scripts/build.ts",
+    "build:bin": "bun run apps/cli/scripts/compile.ts --single"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.3.14",
     "@types/bun": "latest",
     "@types/node": "^25.0.10",
     "@types/open": "^6.2.1",
