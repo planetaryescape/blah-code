@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "bun run --filter '@blah-code/cli' dev",
     "dev:daemon": "bun run --filter '@blah-code/daemon' dev",
-    "lint": "biome lint . --files-ignore-unknown=true --diagnostic-level=error",
+    "lint": "biome lint apps packages --json-linter-enabled=false --files-ignore-unknown=true --diagnostic-level=error",
     "typecheck": "bun run --workspaces typecheck",
     "test": "bun run --workspaces test",
     "build": "bun run apps/cli/scripts/build.ts",
