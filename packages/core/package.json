@@ -1,0 +1,15 @@
+{
+  "name": "@blah-code/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "@blah-code/policy": "workspace:*",
+    "@blah-code/tools": "workspace:*",
+    "zod": "^4.2.1"
+  }
+}

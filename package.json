@@ -1,0 +1,22 @@
+{
+  "name": "blah-code",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.3.5",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@blah-code/cli' dev",
+    "dev:daemon": "bun run --filter '@blah-code/daemon' dev",
+    "typecheck": "bun run --workspaces typecheck",
+    "test": "bun run --workspaces test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.0.10",
+    "@types/picomatch": "^4.0.2",
+    "typescript": "^5.9.3"
+  }
+}
