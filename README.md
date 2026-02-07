@@ -2,6 +2,17 @@
 
 Local-first coding agent CLI + daemon for blah.chat users.
 
+## open source
+
+- license: `MIT` (`LICENSE`)
+- contributor guide: `CONTRIBUTING.md`
+- code of conduct: `CODE_OF_CONDUCT.md`
+- security policy: `SECURITY.md`
+- support: `SUPPORT.md`
+- governance: `GOVERNANCE.md`
+- maintainers: `MAINTAINERS.md`
+- dev docs: `docs/README.md`
+
 ## quickstart
 
 ```bash
@@ -62,3 +73,7 @@ If you never run `blah-code login`, it can still reuse credentials from existing
 - `POST /v1/sessions/:id/permissions/:requestId/reply`
 - `POST /v1/sessions/:id/checkpoint`
 - `POST /v1/sessions/:id/revert`
+
+## contributing
+
+See `CONTRIBUTING.md`.
