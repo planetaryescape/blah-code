@@ -1,0 +1,56 @@
+name: Feature request
+description: Suggest a new capability or improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing/painful today?
+      placeholder: "I need ... because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: "Add ... so that ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Small incremental change
+        - Medium feature
+        - Large architecture/product change
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willing
+    attributes:
+      label: Can you contribute a PR?
+      options:
+        - Yes
+        - Yes, with guidance
+        - No
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues/discussions first
+          required: true

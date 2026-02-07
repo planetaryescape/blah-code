@@ -2,6 +2,17 @@
 
 Local-first coding agent CLI + daemon for blah.chat users.
 
+## open source
+
+- license: `MIT` (`LICENSE`)
+- contributor guide: `CONTRIBUTING.md`
+- code of conduct: `CODE_OF_CONDUCT.md`
+- security policy: `SECURITY.md`
+- support: `SUPPORT.md`
+- governance: `GOVERNANCE.md`
+- maintainers: `MAINTAINERS.md`
+- dev docs: `docs/README.md`
+
 ## quickstart
 
 ```bash
@@ -36,10 +47,17 @@ Create `blah-code.json` in your project root:
 
 ## env
 
-- `BLAH_API_KEY` required
+- `BLAH_API_KEY` optional if you run `blah-code login`
 - `BLAH_BASE_URL` optional (default `https://blah.chat`)
 
-If not set, `blah-code` reuses credentials and app URL from existing `blah` CLI login.
+Auth options:
+
+```bash
+blah-code login
+blah-code login --api-key blah_xxx
+```
+
+If you never run `blah-code login`, it can still reuse credentials from existing `blah` CLI login.
 
 ## daemon API
 
@@ -55,3 +73,7 @@ If not set, `blah-code` reuses credentials and app URL from existing `blah` CLI 
 - `POST /v1/sessions/:id/permissions/:requestId/reply`
 - `POST /v1/sessions/:id/checkpoint`
 - `POST /v1/sessions/:id/revert`
+
+## contributing
+
+See `CONTRIBUTING.md`.

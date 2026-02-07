@@ -8,6 +8,9 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun run src/index.ts",
+    "build": "bun run scripts/build.ts",
+    "compile": "bun run scripts/compile.ts",
+    "publish:npm": "bun run scripts/publish.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test --pass-with-no-tests"
   },

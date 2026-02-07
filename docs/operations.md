@@ -36,7 +36,7 @@ Look for event order:
 ## common failures
 
 1. `BLAH_API_KEY missing`
-- set env or run `blah login` so credential reuse works.
+- set env or run `blah-code login`.
 
 2. model call hangs/fails
 - validate `BLAH_BASE_URL`

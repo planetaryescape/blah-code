@@ -9,8 +9,15 @@ import { SessionStore } from "@blah-code/session";
 import { createToolRuntime } from "@blah-code/tools";
 import {
   BlahTransport,
+  loadBlahCodeApiKey,
+  loadBlahCodeAppUrl,
+  loadBlahCodeCredentials,
+  saveBlahCodeAppUrl,
+  saveBlahCodeCredentials,
   loadBlahCliApiKey,
   loadBlahCliAppUrl,
+  startBlahCodeOAuthFlow,
+  validateBlahApiKey,
 } from "@blah-code/transport-blah";
 import { Command } from "commander";
 import { createInterface } from "node:readline/promises";
@@ -60,6 +67,69 @@ async function promptPermission(
   }
 }
 
+function resolveBaseUrl(input?: string): string {
+  return (
+    input ??
+    process.env.BLAH_BASE_URL ??
+    loadBlahCodeAppUrl() ??
+    loadBlahCliAppUrl() ??
+    "https://blah.chat"
+  );
+}
+
+program
+  .command("login")
+  .description("Authenticate blah-code with blah.chat")
+  .option("-k, --api-key <key>", "login with API key")
+  .option("--base-url <url>", "blah base url")
+  .option("--force", "overwrite existing blah-code login", false)
+  .action(async (opts) => {
+    const existing = loadBlahCodeCredentials();
+    if (existing && !opts.force) {
+      console.log(`Already logged in as ${existing.name ?? existing.email ?? "user"}`);
+      console.log("Use --force to replace stored credentials.");
+      return;
+    }
+
+    const baseUrl = resolveBaseUrl(opts.baseUrl);
+
+    try {
+      if (opts.apiKey) {
+        if (!opts.apiKey.startsWith("blah_")) {
+          console.error("Invalid API key format. Expected prefix: blah_");
+          process.exit(1);
+        }
+
+        const profile = await validateBlahApiKey({
+          apiKey: opts.apiKey,
+          baseUrl,
+        });
+
+        saveBlahCodeCredentials({
+          apiKey: opts.apiKey,
+          keyPrefix: `${opts.apiKey.slice(0, 12)}...`,
+          email: profile.email,
+          name: profile.name,
+          createdAt: Date.now(),
+        });
+        saveBlahCodeAppUrl(baseUrl);
+        console.log(`Logged in as ${profile.name}`);
+        return;
+      }
+
+      console.log("Opening browser for authentication...");
+      console.log("Complete login in browser. Times out in 5 minutes.");
+      const credentials = await startBlahCodeOAuthFlow({ baseUrl });
+      saveBlahCodeCredentials(credentials);
+      saveBlahCodeAppUrl(baseUrl);
+      console.log(`Logged in as ${credentials.name ?? credentials.email ?? "user"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown login error";
+      console.error(`Login failed: ${message}`);
+      process.exit(1);
+    }
+  });
+
 program
   .command("run")
   .description("Run one coding-agent task")
@@ -74,13 +144,14 @@ program
   .action(async (prompt: string, opts) => {
     const config = loadBlahCodeConfig(opts.cwd);
 
-    const apiKey = opts.apiKey ?? process.env.BLAH_API_KEY ?? loadBlahCliApiKey();
+    const apiKey =
+      opts.apiKey ?? process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey();
     if (!apiKey) {
-      console.error("BLAH_API_KEY required (env, --api-key, or run `blah login` first)");
+      console.error("BLAH_API_KEY required (env, --api-key, or run `blah-code login` first)");
       process.exit(1);
     }
 
-    const baseUrl = opts.baseUrl ?? process.env.BLAH_BASE_URL ?? loadBlahCliAppUrl() ?? "https://blah.chat";
+    const baseUrl = resolveBaseUrl(opts.baseUrl);
     const modelId =
       opts.model ?? process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini";
 

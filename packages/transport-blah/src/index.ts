@@ -1,5 +1,9 @@
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import Conf from "conf";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { URL } from "node:url";
+import open from "open";
 
 export interface TransportMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -27,7 +31,7 @@ export interface BlahTransportOptions {
   conversationId?: string;
 }
 
-interface StoredCredentials {
+export interface StoredCredentials {
   apiKey: string;
   keyPrefix?: string;
   email?: string;
@@ -41,6 +45,10 @@ interface CliRpcEnvelope<T> {
   error?: string | { message?: string };
 }
 
+function normalizeBaseUrl(baseUrl?: string): string {
+  return (baseUrl ?? "https://blah.chat").replace(/\/$/, "");
+}
+
 export class BlahTransport implements ModelTransport {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -48,7 +56,7 @@ export class BlahTransport implements ModelTransport {
 
   constructor(options: BlahTransportOptions) {
     this.apiKey = options.apiKey;
-    this.baseUrl = (options.baseUrl ?? "https://blah.chat").replace(/\/$/, "");
+    this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.conversationId = options.conversationId ?? null;
   }
 
@@ -230,4 +238,183 @@ export function loadBlahCliAppUrl(): string | null {
     configName: "config",
   });
   return configStore.get("appUrl") ?? null;
+}
+
+function getBlahCodeAuthStore() {
+  return new Conf<{ credentials?: StoredCredentials }>({
+    projectName: "blah-code",
+    projectVersion: "1.0.0",
+    configName: "auth",
+  });
+}
+
+function getBlahCodeConfigStore() {
+  return new Conf<{ appUrl?: string }>({
+    projectName: "blah-code",
+    projectVersion: "1.0.0",
+    configName: "config",
+  });
+}
+
+export function loadBlahCodeCredentials(): StoredCredentials | null {
+  return getBlahCodeAuthStore().get("credentials") ?? null;
+}
+
+export function saveBlahCodeCredentials(credentials: StoredCredentials): void {
+  getBlahCodeAuthStore().set("credentials", credentials);
+}
+
+export function clearBlahCodeCredentials(): void {
+  getBlahCodeAuthStore().delete("credentials");
+}
+
+export function loadBlahCodeApiKey(): string | null {
+  return loadBlahCodeCredentials()?.apiKey ?? null;
+}
+
+export function loadBlahCodeAppUrl(): string | null {
+  return getBlahCodeConfigStore().get("appUrl") ?? null;
+}
+
+export function saveBlahCodeAppUrl(appUrl: string): void {
+  getBlahCodeConfigStore().set("appUrl", normalizeBaseUrl(appUrl));
+}
+
+export function getBlahCodeAuthPath(): string {
+  return getBlahCodeAuthStore().path;
+}
+
+export async function validateBlahApiKey(input: {
+  apiKey: string;
+  baseUrl?: string;
+}): Promise<{ email: string; name: string }> {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  const res = await fetch(`${baseUrl}/api/v1/cli/rpc`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": input.apiKey,
+      authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify({ method: "validateApiKey" }),
+  });
+
+  const json = (await res.json()) as CliRpcEnvelope<{
+    email?: string;
+    name?: string;
+  }>;
+
+  if (!res.ok || json.status === "error" || !json.data?.email) {
+    const message =
+      typeof json.error === "string" ? json.error : (json.error?.message ?? "API key validation failed");
+    throw new Error(message);
+  }
+
+  return {
+    email: json.data.email,
+    name: json.data.name ?? json.data.email.split("@")[0] ?? "User",
+  };
+}
+
+export async function startBlahCodeOAuthFlow(input?: {
+  baseUrl?: string;
+  timeoutMs?: number;
+}): Promise<StoredCredentials> {
+  const baseUrl = normalizeBaseUrl(input?.baseUrl);
+  const timeoutMs = input?.timeoutMs ?? 5 * 60 * 1000;
+
+  return await new Promise<StoredCredentials>((resolve, reject) => {
+    const callbackPath = "/oauth/callback";
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "", "http://127.0.0.1");
+
+      if (url.pathname === callbackPath && req.method === "GET") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(
+          "<!doctype html><html><body><script>(function(){const p=new URLSearchParams(location.hash.slice(1));fetch('/oauth/callback/complete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({api_key:p.get('api_key'),key_prefix:p.get('key_prefix'),email:p.get('email'),name:p.get('name'),error:p.get('error')})}).then(()=>{document.body.innerHTML='Authentication complete. You can close this window.';setTimeout(()=>window.close(),2000);}).catch(()=>{document.body.innerHTML='Authentication failed. Return to terminal.';});})();</script></body></html>",
+        );
+        return;
+      }
+
+      if (url.pathname === `${callbackPath}/complete` && req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          try {
+            const data = JSON.parse(body) as {
+              api_key?: string;
+              key_prefix?: string;
+              email?: string;
+              name?: string;
+              error?: string;
+            };
+
+            if (data.error) {
+              res.writeHead(400).end(data.error);
+              server.close();
+              reject(new Error(data.error));
+              return;
+            }
+
+            if (!data.api_key || !data.email) {
+              res.writeHead(400).end("missing callback fields");
+              server.close();
+              reject(new Error("Missing required callback fields"));
+              return;
+            }
+
+            const credentials: StoredCredentials = {
+              apiKey: data.api_key,
+              keyPrefix: data.key_prefix ?? `${data.api_key.slice(0, 12)}...`,
+              email: data.email,
+              name: data.name ?? data.email.split("@")[0] ?? "User",
+              createdAt: Date.now(),
+            };
+
+            res.writeHead(200).end("ok");
+            server.close();
+            resolve(credentials);
+          } catch {
+            res.writeHead(400).end("invalid callback payload");
+            server.close();
+            reject(new Error("Invalid callback payload"));
+          }
+        });
+        return;
+      }
+
+      res.writeHead(404).end("not found");
+    });
+
+    server.on("error", (error) => {
+      reject(new Error(`Failed to start callback server: ${error.message}`));
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo | null;
+      const port = address?.port;
+      if (!port) {
+        server.close();
+        reject(new Error("Could not determine callback port"));
+        return;
+      }
+
+      const callbackUrl = `http://127.0.0.1:${port}${callbackPath}`;
+      const loginUrl = `${baseUrl}/cli-login?callback=${encodeURIComponent(callbackUrl)}`;
+      open(loginUrl).catch((error: unknown) => {
+        server.close();
+        const message = error instanceof Error ? error.message : String(error);
+        reject(new Error(`Failed to open browser: ${message}`));
+      });
+    });
+
+    const timeout = setTimeout(() => {
+      server.close();
+      reject(new Error("Authentication timed out after 5 minutes"));
+    }, timeoutMs);
+
+    server.on("close", () => clearTimeout(timeout));
+  });
 }

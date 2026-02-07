@@ -8,6 +8,8 @@ import { SessionStore } from "@blah-code/session";
 import { createToolRuntime } from "@blah-code/tools";
 import {
   BlahTransport,
+  loadBlahCodeApiKey,
+  loadBlahCodeAppUrl,
   loadBlahCliApiKey,
   loadBlahCliAppUrl,
 } from "@blah-code/transport-blah";
@@ -36,8 +38,9 @@ const listeners = new Map<string, Set<(event: SessionEvent) => void>>();
 const config = loadBlahCodeConfig(process.cwd());
 
 const runtime = {
-  baseUrl: process.env.BLAH_BASE_URL ?? loadBlahCliAppUrl() ?? "https://blah.chat",
-  apiKey: process.env.BLAH_API_KEY ?? loadBlahCliApiKey(),
+  baseUrl:
+    process.env.BLAH_BASE_URL ?? loadBlahCodeAppUrl() ?? loadBlahCliAppUrl() ?? "https://blah.chat",
+  apiKey: process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey(),
   modelId: process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini",
   cwd: process.cwd(),
   permissionPolicy: config.permission ?? {},

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/planetaryescape/blah-code/discussions
+    about: Questions, ideas, design discussions
+  - name: Contributing guide
+    url: https://github.com/planetaryescape/blah-code/blob/main/CONTRIBUTING.md
+    about: Workflow, setup, validation requirements
+  - name: Security issue
+    url: https://github.com/planetaryescape/blah-code/security/advisories/new
+    about: Private reporting for vulnerabilities
