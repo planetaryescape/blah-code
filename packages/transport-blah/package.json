@@ -1,0 +1,14 @@
+{
+  "name": "@blah-code/transport-blah",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "conf": "^15.1.0",
+    "eventsource-parser": "^3.0.6"
+  }
+}

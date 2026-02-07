@@ -1,0 +1,22 @@
+{
+  "name": "@blah-code/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "blah-code": "./src/index.ts"
+  },
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "@blah-code/config": "workspace:*",
+    "@blah-code/core": "workspace:*",
+    "@blah-code/session": "workspace:*",
+    "@blah-code/tools": "workspace:*",
+    "@blah-code/transport-blah": "workspace:*",
+    "commander": "^14.0.1"
+  }
+}

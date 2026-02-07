@@ -1,0 +1,19 @@
+{
+  "name": "@blah-code/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "@blah-code/config": "workspace:*",
+    "@blah-code/core": "workspace:*",
+    "@blah-code/session": "workspace:*",
+    "@blah-code/tools": "workspace:*",
+    "@blah-code/transport-blah": "workspace:*",
+    "fastify": "^5.6.1"
+  }
+}

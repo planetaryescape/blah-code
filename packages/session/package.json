@@ -1,0 +1,13 @@
+{
+  "name": "@blah-code/session",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.6"
+  }
+}

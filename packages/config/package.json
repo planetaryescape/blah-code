@@ -1,0 +1,13 @@
+{
+  "name": "@blah-code/config",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "zod": "^4.2.1"
+  }
+}

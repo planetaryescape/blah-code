@@ -1,0 +1,17 @@
+{
+  "name": "@blah-code/tools",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "execa": "^9.6.0",
+    "fast-glob": "^3.3.3",
+    "picomatch": "^4.0.3",
+    "zod": "^4.2.1"
+  }
+}
