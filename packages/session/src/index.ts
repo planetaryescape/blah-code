@@ -12,11 +12,24 @@ export interface SessionEvent {
   createdAt: number;
 }
 
+export interface SessionSummary {
+  id: string;
+  createdAt: number;
+  lastEventAt: number | null;
+  eventCount: number;
+}
+
+export function defaultSessionDbPath(): string {
+  return path.join(os.homedir(), ".blah-code", "sessions.db");
+}
+
 export class SessionStore {
   private db: Database;
+  private filePath: string;
 
   constructor(dbPath?: string) {
-    const file = dbPath ?? path.join(os.homedir(), ".blah-code", "sessions.db");
+    const file = dbPath ?? defaultSessionDbPath();
+    this.filePath = file;
     mkdirSync(path.dirname(file), { recursive: true });
     this.db = new Database(file, { create: true, strict: true });
 
@@ -77,5 +90,44 @@ export class SessionStore {
       payload: JSON.parse(row.payload),
       createdAt: row.created_at,
     }));
+  }
+
+  listSessions(limit = 20): SessionSummary[] {
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit), 500));
+
+    const rows = this.db
+      .query(
+        `SELECT
+          s.id AS id,
+          s.created_at AS created_at,
+          MAX(e.created_at) AS last_event_at,
+          COUNT(e.id) AS event_count
+        FROM sessions s
+        LEFT JOIN events e ON e.session_id = s.id
+        GROUP BY s.id, s.created_at
+        ORDER BY COALESCE(MAX(e.created_at), s.created_at) DESC
+        LIMIT ?`,
+      )
+      .all(safeLimit) as Array<{
+      id: string;
+      created_at: number;
+      last_event_at: number | null;
+      event_count: number;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      lastEventAt: row.last_event_at,
+      eventCount: row.event_count,
+    }));
+  }
+
+  getLastSessionId(): string | null {
+    return this.listSessions(1)[0]?.id ?? null;
+  }
+
+  dbPath(): string {
+    return this.filePath;
   }
 }

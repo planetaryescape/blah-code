@@ -11,6 +11,7 @@
   "dependencies": {
     "@blah-code/config": "workspace:*",
     "@blah-code/core": "workspace:*",
+    "@blah-code/logger": "workspace:*",
     "@blah-code/session": "workspace:*",
     "@blah-code/tools": "workspace:*",
     "@blah-code/transport-blah": "workspace:*",

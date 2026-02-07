@@ -4,6 +4,7 @@ import {
   type PermissionRequest,
   type PermissionResolution,
 } from "@blah-code/core";
+import { initLogging, createLogger, logPath, readLogTail, type LogLevel } from "@blah-code/logger";
 import { SessionStore } from "@blah-code/session";
 import { createToolRuntime } from "@blah-code/tools";
 import {
@@ -13,7 +14,7 @@ import {
   loadBlahCliApiKey,
   loadBlahCliAppUrl,
 } from "@blah-code/transport-blah";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 
 interface SessionEvent {
   id: string;
@@ -30,250 +31,353 @@ interface PendingApproval {
   createdAt: number;
 }
 
-const app = Fastify({ logger: true });
-const store = new SessionStore();
-const pendingApprovals = new Map<string, Map<string, PendingApproval>>();
-const listeners = new Map<string, Set<(event: SessionEvent) => void>>();
-
-const config = loadBlahCodeConfig(process.cwd());
-
-const runtime = {
-  baseUrl:
-    process.env.BLAH_BASE_URL ?? loadBlahCodeAppUrl() ?? loadBlahCliAppUrl() ?? "https://blah.chat",
-  apiKey: process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey(),
-  modelId: process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini",
-  cwd: process.cwd(),
-  permissionPolicy: config.permission ?? {},
-};
-
-const toolRuntimePromise = createToolRuntime({
-  mcpServers: config.mcp,
-});
-
-function emitEvent(sessionId: string, kind: string, payload: unknown): SessionEvent {
-  const event = store.appendEvent(sessionId, kind, payload);
-  const eventObj: SessionEvent = {
-    id: event.id,
-    sessionId: event.sessionId,
-    kind: event.kind,
-    payload: event.payload,
-    createdAt: event.createdAt,
-  };
-
-  const sessionListeners = listeners.get(sessionId);
-  if (sessionListeners) {
-    for (const notify of sessionListeners) {
-      notify(eventObj);
-    }
-  }
-
-  return eventObj;
+export interface BlahCodeServerOptions {
+  cwd?: string;
+  host?: string;
+  port?: number;
+  printLogs?: boolean;
+  logLevel?: LogLevel;
 }
 
-app.get("/health", async () => ({ status: "ok" }));
+export interface BlahCodeServer {
+  app: FastifyInstance;
+  host: string;
+  port: number;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+}
 
-app.get("/v1/tools", async () => {
-  const toolRuntime = await toolRuntimePromise;
-  return {
-    tools: toolRuntime.listToolSpecs(),
-  };
-});
+export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeServer {
+  const cwd = options?.cwd ?? process.cwd();
+  const config = loadBlahCodeConfig(cwd);
 
-app.get("/v1/permissions/rules", async () => {
-  return {
-    policy: runtime.permissionPolicy,
-  };
-});
-
-app.post<{ Body: { policy: unknown } }>("/v1/permissions/rules", async (req, reply) => {
-  if (!req.body || typeof req.body.policy !== "object") {
-    return reply.status(400).send({ error: "policy object required" });
-  }
-  runtime.permissionPolicy = req.body.policy as Record<string, unknown>;
-  return { success: true, policy: runtime.permissionPolicy };
-});
-
-app.post("/v1/sessions", async () => {
-  const sessionId = store.createSession();
-  return { sessionId };
-});
-
-app.post<{ Params: { id: string }; Body: { name?: string; summary?: string } }>(
-  "/v1/sessions/:id/checkpoint",
-  async (req, reply) => {
-    const checkpointId = crypto.randomUUID();
-    emitEvent(req.params.id, "checkpoint", {
-      checkpointId,
-      name: req.body?.name ?? "checkpoint",
-      summary: req.body?.summary ?? "",
-      createdAt: Date.now(),
-    });
-    return reply.send({ checkpointId });
-  },
-);
-
-app.post<{ Params: { id: string }; Body: { checkpointId: string } }>(
-  "/v1/sessions/:id/revert",
-  async (req, reply) => {
-    emitEvent(req.params.id, "revert", {
-      checkpointId: req.body.checkpointId,
-      revertedAt: Date.now(),
-    });
-    return reply.send({ success: true });
-  },
-);
-
-app.get<{ Params: { id: string } }>("/v1/sessions/:id/events", async (req, reply) => {
-  return reply.send(store.listEvents(req.params.id));
-});
-
-app.get<{ Params: { id: string } }>(
-  "/v1/sessions/:id/events/stream",
-  async (req, reply) => {
-    const sessionId = req.params.id;
-    reply.raw.setHeader("content-type", "text/event-stream");
-    reply.raw.setHeader("cache-control", "no-cache");
-    reply.raw.setHeader("connection", "keep-alive");
-
-    const send = (event: string, data: unknown) => {
-      reply.raw.write(`event: ${event}\n`);
-      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
-    send("snapshot", { events: store.listEvents(sessionId) });
-
-    const heartbeat = setInterval(() => send("heartbeat", { ts: Date.now() }), 30000);
-
-    if (!listeners.has(sessionId)) {
-      listeners.set(sessionId, new Set());
-    }
-
-    const notify = (event: SessionEvent) => send("update", { event });
-    listeners.get(sessionId)?.add(notify);
-
-    req.raw.on("close", () => {
-      clearInterval(heartbeat);
-      listeners.get(sessionId)?.delete(notify);
-    });
-
-    return reply;
-  },
-);
-
-app.get<{ Params: { id: string } }>("/v1/sessions/:id/permissions", async (req, reply) => {
-  const sessionMap = pendingApprovals.get(req.params.id);
-  if (!sessionMap) return reply.send([]);
-
-  const requests = Array.from(sessionMap.values()).map((p) => ({
-    ...p.request,
-    createdAt: p.createdAt,
-  }));
-
-  return reply.send(requests);
-});
-
-app.post<{
-  Params: { id: string; requestId: string };
-  Body: { decision: "allow" | "deny" | "ask"; remember?: { key: string; pattern: string } };
-}>("/v1/sessions/:id/permissions/:requestId/reply", async (req, reply) => {
-  const sessionMap = pendingApprovals.get(req.params.id);
-  const pending = sessionMap?.get(req.params.requestId);
-
-  if (!pending) {
-    return reply.status(404).send({ error: "Permission request not found" });
-  }
-
-  const resolution: PermissionResolution = {
-    decision: req.body.decision,
-    remember: req.body.remember
-      ? {
-          key: req.body.remember.key,
-          pattern: req.body.remember.pattern,
-          decision: req.body.decision,
-        }
-      : undefined,
-  };
-
-  pending.resolve(resolution);
-  sessionMap?.delete(req.params.requestId);
-
-  emitEvent(req.params.id, "permission_resolved", {
-    requestId: req.params.requestId,
-    decision: req.body.decision,
-    remember: req.body.remember ?? null,
+  initLogging({
+    level: options?.logLevel ?? config.logging?.level,
+    print: options?.printLogs ?? config.logging?.print ?? false,
   });
 
-  return reply.send({ success: true });
-});
+  const logger = createLogger("daemon");
+  const app = Fastify({ logger: true });
+  const store = new SessionStore();
+  const pendingApprovals = new Map<string, Map<string, PendingApproval>>();
+  const listeners = new Map<string, Set<(event: SessionEvent) => void>>();
+  const activeSessions = new Set<string>();
+  const startedAt = Date.now();
 
-app.post<{ Params: { id: string }; Body: { prompt: string; modelId?: string } }>(
-  "/v1/sessions/:id/prompt",
-  async (req, reply) => {
-    if (!runtime.apiKey) {
-      return reply.status(400).send({ error: "BLAH_API_KEY missing" });
+  const host = options?.host ?? config.daemon?.host ?? "127.0.0.1";
+  const port = Number(options?.port ?? config.daemon?.port ?? process.env.BLAH_CODE_PORT ?? 3789);
+
+  const runtime: {
+    baseUrl: string;
+    apiKey: string | null;
+    modelId: string;
+    cwd: string;
+    permissionPolicy: Record<string, unknown>;
+  } = {
+    baseUrl:
+      process.env.BLAH_BASE_URL ?? loadBlahCodeAppUrl() ?? loadBlahCliAppUrl() ?? "https://blah.chat",
+    apiKey: process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey(),
+    modelId: process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini",
+    cwd,
+    permissionPolicy: config.permission ?? {},
+  };
+
+  const toolRuntimePromise = createToolRuntime({
+    mcpServers: config.mcp,
+  });
+
+  function emitEvent(sessionId: string, kind: string, payload: unknown): SessionEvent {
+    const event = store.appendEvent(sessionId, kind, payload);
+    const eventObj: SessionEvent = {
+      id: event.id,
+      sessionId: event.sessionId,
+      kind: event.kind,
+      payload: event.payload,
+      createdAt: event.createdAt,
+    };
+
+    const sessionListeners = listeners.get(sessionId);
+    if (sessionListeners) {
+      for (const notify of sessionListeners) {
+        notify(eventObj);
+      }
     }
 
-    const transport = new BlahTransport({
-      apiKey: runtime.apiKey,
-      baseUrl: runtime.baseUrl,
-    });
+    return eventObj;
+  }
 
-    const runner = new AgentRunner(transport);
-    const toolRuntime = await toolRuntimePromise;
+  app.get("/health", async () => ({ status: "ok" }));
 
-    const result = await runner.run({
-      prompt: req.body.prompt,
+  app.get("/v1/status", async () => {
+    return {
+      health: "ok",
+      mode: "daemon",
+      uptimeMs: Date.now() - startedAt,
+      apiKeyPresent: Boolean(runtime.apiKey),
       cwd: runtime.cwd,
-      modelId: req.body.modelId ?? runtime.modelId,
+      modelId: runtime.modelId,
+      baseUrl: runtime.baseUrl,
+      dbPath: store.dbPath(),
+      logPath: logPath(),
+      activeSessions: Array.from(activeSessions),
+      host,
+      port,
+    };
+  });
+
+  app.get<{ Querystring: { lines?: string } }>("/v1/logs", async (req) => {
+    const lines = Number(req.query.lines ?? "200");
+    const entries = await readLogTail(lines);
+    return {
+      path: logPath(),
+      lines: entries,
+      count: entries.length,
+    };
+  });
+
+  app.get("/v1/tools", async () => {
+    const toolRuntime = await toolRuntimePromise;
+    return {
+      tools: toolRuntime.listToolSpecs(),
+    };
+  });
+
+  app.get("/v1/permissions/rules", async () => {
+    return {
       policy: runtime.permissionPolicy,
-      toolRuntime,
-      onEvent(event) {
-        emitEvent(req.params.id, event.type, event.payload);
-      },
-      onPermissionRequest(permissionRequest) {
-        if (!pendingApprovals.has(req.params.id)) {
-          pendingApprovals.set(req.params.id, new Map());
-        }
+    };
+  });
 
-        return new Promise<PermissionResolution>((resolve, reject) => {
-          const sessionMap = pendingApprovals.get(req.params.id)!;
+  app.post<{ Body: { policy: unknown } }>("/v1/permissions/rules", async (req, reply) => {
+    if (!req.body || typeof req.body.policy !== "object") {
+      return reply.status(400).send({ error: "policy object required" });
+    }
+    runtime.permissionPolicy = req.body.policy as Record<string, unknown>;
+    return { success: true, policy: runtime.permissionPolicy };
+  });
 
-          sessionMap.set(permissionRequest.requestId, {
-            request: permissionRequest,
-            resolve,
-            reject,
-            createdAt: Date.now(),
-          });
+  app.post("/v1/sessions", async () => {
+    const sessionId = store.createSession();
+    return { sessionId };
+  });
 
-          emitEvent(req.params.id, "permission_request", permissionRequest);
+  app.get<{ Querystring: { limit?: string } }>("/v1/sessions", async (req) => {
+    const limit = Number(req.query.limit ?? "20");
+    return {
+      sessions: store.listSessions(limit),
+    };
+  });
 
-          setTimeout(() => {
-            const stillPending = sessionMap.get(permissionRequest.requestId);
-            if (!stillPending) return;
-            sessionMap.delete(permissionRequest.requestId);
-            resolve({ decision: "deny" });
-          }, 5 * 60 * 1000);
-        });
-      },
+  app.post<{ Params: { id: string }; Body: { name?: string; summary?: string } }>(
+    "/v1/sessions/:id/checkpoint",
+    async (req, reply) => {
+      const checkpointId = crypto.randomUUID();
+      emitEvent(req.params.id, "checkpoint", {
+        checkpointId,
+        name: req.body?.name ?? "checkpoint",
+        summary: req.body?.summary ?? "",
+        createdAt: Date.now(),
+      });
+      return reply.send({ checkpointId });
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { checkpointId: string } }>(
+    "/v1/sessions/:id/revert",
+    async (req, reply) => {
+      emitEvent(req.params.id, "revert", {
+        checkpointId: req.body.checkpointId,
+        revertedAt: Date.now(),
+      });
+      return reply.send({ success: true });
+    },
+  );
+
+  app.get<{ Params: { id: string } }>("/v1/sessions/:id/events", async (req, reply) => {
+    return reply.send(store.listEvents(req.params.id));
+  });
+
+  app.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id/events/stream",
+    async (req, reply) => {
+      const sessionId = req.params.id;
+      reply.raw.setHeader("content-type", "text/event-stream");
+      reply.raw.setHeader("cache-control", "no-cache");
+      reply.raw.setHeader("connection", "keep-alive");
+
+      const send = (event: string, data: unknown) => {
+        reply.raw.write(`event: ${event}\n`);
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      send("snapshot", { events: store.listEvents(sessionId) });
+
+      const heartbeat = setInterval(() => send("heartbeat", { ts: Date.now() }), 30000);
+
+      if (!listeners.has(sessionId)) {
+        listeners.set(sessionId, new Set());
+      }
+
+      const notify = (event: SessionEvent) => send("update", { event });
+      listeners.get(sessionId)?.add(notify);
+
+      req.raw.on("close", () => {
+        clearInterval(heartbeat);
+        listeners.get(sessionId)?.delete(notify);
+      });
+
+      return reply;
+    },
+  );
+
+  app.get<{ Params: { id: string } }>("/v1/sessions/:id/permissions", async (req, reply) => {
+    const sessionMap = pendingApprovals.get(req.params.id);
+    if (!sessionMap) return reply.send([]);
+
+    const requests = Array.from(sessionMap.values()).map((p) => ({
+      ...p.request,
+      createdAt: p.createdAt,
+    }));
+
+    return reply.send(requests);
+  });
+
+  app.post<{
+    Params: { id: string; requestId: string };
+    Body: { decision: "allow" | "deny" | "ask"; remember?: { key: string; pattern: string } };
+  }>("/v1/sessions/:id/permissions/:requestId/reply", async (req, reply) => {
+    const sessionMap = pendingApprovals.get(req.params.id);
+    const pending = sessionMap?.get(req.params.requestId);
+
+    if (!pending) {
+      return reply.status(404).send({ error: "Permission request not found" });
+    }
+
+    const resolution: PermissionResolution = {
+      decision: req.body.decision,
+      remember: req.body.remember
+        ? {
+            key: req.body.remember.key,
+            pattern: req.body.remember.pattern,
+            decision: req.body.decision,
+          }
+        : undefined,
+    };
+
+    pending.resolve(resolution);
+    sessionMap?.delete(req.params.requestId);
+
+    emitEvent(req.params.id, "permission_resolved", {
+      requestId: req.params.requestId,
+      decision: req.body.decision,
+      remember: req.body.remember ?? null,
     });
 
-    return reply.send({ output: result.text, policy: result.policy });
-  },
-);
+    return reply.send({ success: true });
+  });
 
-const port = Number(process.env.BLAH_CODE_PORT ?? 3789);
-app.listen({ host: "127.0.0.1", port }).catch(async (error) => {
-  app.log.error(error);
-  const toolRuntime = await toolRuntimePromise.catch(() => null);
-  await toolRuntime?.close().catch(() => undefined);
-  process.exit(1);
-});
+  app.post<{ Params: { id: string }; Body: { prompt: string; modelId?: string; timeoutMs?: number } }>(
+    "/v1/sessions/:id/prompt",
+    async (req, reply) => {
+      if (!runtime.apiKey) {
+        return reply.status(400).send({ error: "BLAH_API_KEY missing" });
+      }
 
-const shutdown = async () => {
-  const toolRuntime = await toolRuntimePromise.catch(() => null);
-  await toolRuntime?.close().catch(() => undefined);
-  process.exit(0);
-};
+      const transport = new BlahTransport({
+        apiKey: runtime.apiKey,
+        baseUrl: runtime.baseUrl,
+      });
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+      const runner = new AgentRunner(transport);
+      const toolRuntime = await toolRuntimePromise;
+      activeSessions.add(req.params.id);
+
+      try {
+        const result = await runner.run({
+          prompt: req.body.prompt,
+          cwd: runtime.cwd,
+          modelId: req.body.modelId ?? runtime.modelId,
+          timeoutMs: req.body.timeoutMs,
+          policy: runtime.permissionPolicy,
+          toolRuntime,
+          onEvent(event) {
+            emitEvent(req.params.id, event.type, event.payload);
+          },
+          onPermissionRequest(permissionRequest) {
+            if (!pendingApprovals.has(req.params.id)) {
+              pendingApprovals.set(req.params.id, new Map());
+            }
+
+            return new Promise<PermissionResolution>((resolve, reject) => {
+              const sessionMap = pendingApprovals.get(req.params.id)!;
+
+              sessionMap.set(permissionRequest.requestId, {
+                request: permissionRequest,
+                resolve,
+                reject,
+                createdAt: Date.now(),
+              });
+
+              emitEvent(req.params.id, "permission_request", permissionRequest);
+
+              setTimeout(() => {
+                const stillPending = sessionMap.get(permissionRequest.requestId);
+                if (!stillPending) return;
+                sessionMap.delete(permissionRequest.requestId);
+                resolve({ decision: "deny" });
+              }, 5 * 60 * 1000);
+            });
+          },
+        });
+
+        return reply.send({ output: result.text, policy: result.policy });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`prompt run failed sessionId=${req.params.id} error=${message}`);
+        return reply.status(500).send({ error: message });
+      } finally {
+        activeSessions.delete(req.params.id);
+      }
+    },
+  );
+
+  async function start() {
+    await app.listen({ host, port });
+    logger.info(`daemon started host=${host} port=${port} logPath=${logPath()}`);
+  }
+
+  async function stop() {
+    logger.info("daemon stopping");
+    const toolRuntime = await toolRuntimePromise.catch(() => null);
+    await toolRuntime?.close().catch(() => undefined);
+    await app.close().catch(() => undefined);
+  }
+
+  return {
+    app,
+    host,
+    port,
+    start,
+    stop,
+  };
+}
+
+if (import.meta.main) {
+  const server = createBlahCodeServer();
+
+  const shutdown = async () => {
+    await server.stop();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  server.start().catch(async (error) => {
+    const logger = createLogger("daemon.startup");
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`daemon failed to start error=${message}`);
+    await server.stop();
+    process.exit(1);
+  });
+}

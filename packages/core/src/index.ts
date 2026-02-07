@@ -21,16 +21,22 @@ export interface ModelTransport {
     modelId: string;
     tools: Array<{ name: string; description: string; schema: unknown }>;
     timeoutMs?: number;
+    onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }>;
 }
 
 export interface AgentEvent {
   type:
+    | "run_started"
     | "assistant"
+    | "assistant_delta"
     | "tool_call"
     | "tool_result"
     | "permission_request"
     | "permission_resolved"
+    | "model_timeout"
+    | "run_failed"
+    | "run_finished"
     | "error"
     | "done";
   payload: unknown;
@@ -58,6 +64,7 @@ export interface AgentRunOptions {
   modelId: string;
   cwd: string;
   maxSteps?: number;
+  timeoutMs?: number;
   policy?: unknown;
   toolRuntime?: ToolRuntime;
   onEvent?: (event: AgentEvent) => void;
@@ -127,112 +134,148 @@ export class AgentRunner {
     ];
 
     try {
-      for (let step = 0; step < maxSteps; step++) {
-        const completion = await this.transport.complete({
-          messages,
+      options.onEvent?.({
+        type: "run_started",
+        payload: {
+          prompt: options.prompt,
           modelId: options.modelId,
-          tools: toolRuntime.listToolSpecs().map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            schema: tool.schema,
-          })),
-        });
+          maxSteps,
+        },
+      });
 
-        const text = completion.text;
-        const toolCall = extractToolCall(text);
-        if (!toolCall) {
-          messages.push({ role: "assistant", content: text });
-          options.onEvent?.({ type: "assistant", payload: { text } });
-          options.onEvent?.({ type: "done", payload: { reason: "completed" } });
-          return { text, messages, policy };
-        }
+      try {
+        for (let step = 0; step < maxSteps; step++) {
+          const completion = await this.transport.complete({
+            messages,
+            modelId: options.modelId,
+            timeoutMs: options.timeoutMs,
+            onDelta(chunk) {
+              options.onEvent?.({ type: "assistant_delta", payload: chunk });
+            },
+            tools: toolRuntime.listToolSpecs().map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              schema: tool.schema,
+            })),
+          });
 
-        const toolTarget = summarizeToolTarget(toolCall.tool, toolCall.arguments);
-        const op = toolRuntime.permissionFor(toolCall.tool);
-        let decision = evaluatePermission({
-          policy,
-          op,
-          subject: `tool.${toolCall.tool}`,
-          target: toolTarget,
-        });
+          const text = completion.text;
+          const toolCall = extractToolCall(text);
+          if (!toolCall) {
+            messages.push({ role: "assistant", content: text });
+            options.onEvent?.({ type: "assistant", payload: { text } });
+            options.onEvent?.({
+              type: "run_finished",
+              payload: { reason: "completed" },
+            });
+            options.onEvent?.({ type: "done", payload: { reason: "completed" } });
+            return { text, messages, policy };
+          }
 
-        if (decision === "ask" && options.onPermissionRequest) {
-          const req: PermissionRequest = {
-            requestId: crypto.randomUUID(),
+          const toolTarget = summarizeToolTarget(toolCall.tool, toolCall.arguments);
+          const op = toolRuntime.permissionFor(toolCall.tool);
+          let decision = evaluatePermission({
+            policy,
             op,
-            tool: toolCall.tool,
+            subject: `tool.${toolCall.tool}`,
             target: toolTarget,
-            args: toolCall.arguments,
-          };
+          });
 
-          options.onEvent?.({ type: "permission_request", payload: req });
-          const resolution = await options.onPermissionRequest(req);
+          if (decision === "ask" && options.onPermissionRequest) {
+            const req: PermissionRequest = {
+              requestId: crypto.randomUUID(),
+              op,
+              tool: toolCall.tool,
+              target: toolTarget,
+              args: toolCall.arguments,
+            };
 
-          decision = resolution.decision;
-          if (resolution.remember) {
-            policy = appendPolicyRule({
-              policy,
-              key: resolution.remember.key,
-              pattern: resolution.remember.pattern,
-              decision: resolution.remember.decision,
+            options.onEvent?.({ type: "permission_request", payload: req });
+            const resolution = await options.onPermissionRequest(req);
+
+            decision = resolution.decision;
+            if (resolution.remember) {
+              policy = appendPolicyRule({
+                policy,
+                key: resolution.remember.key,
+                pattern: resolution.remember.pattern,
+                decision: resolution.remember.decision,
+              });
+            }
+
+            options.onEvent?.({
+              type: "permission_resolved",
+              payload: {
+                requestId: req.requestId,
+                decision,
+                remember: resolution.remember ?? null,
+              },
             });
           }
 
+          if (decision !== "allow") {
+            const err = `Permission ${decision} for ${toolCall.tool}`;
+            messages.push({
+              role: "tool",
+              content: JSON.stringify({
+                tool: toolCall.tool,
+                ok: false,
+                error: err,
+              }),
+            });
+            options.onEvent?.({ type: "error", payload: { message: err } });
+            continue;
+          }
+
+          options.onEvent?.({ type: "tool_call", payload: toolCall });
+
+          try {
+            const result = await toolRuntime.executeTool(
+              toolCall.tool,
+              toolCall.arguments,
+              options.cwd,
+            );
+
+            messages.push({ role: "assistant", content: JSON.stringify(toolCall) });
+            messages.push({
+              role: "tool",
+              content: JSON.stringify({ tool: toolCall.tool, ok: true, result }),
+            });
+            options.onEvent?.({
+              type: "tool_result",
+              payload: { tool: toolCall.tool, result },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            messages.push({
+              role: "tool",
+              content: JSON.stringify({ tool: toolCall.tool, ok: false, error: message }),
+            });
+            options.onEvent?.({ type: "error", payload: { message } });
+          }
+        }
+
+        const fallback = "Stopped: max steps reached";
+        options.onEvent?.({
+          type: "run_finished",
+          payload: { reason: "max_steps" },
+        });
+        options.onEvent?.({ type: "done", payload: { reason: "max_steps" } });
+        return { text: fallback, messages, policy };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("timeout")) {
           options.onEvent?.({
-            type: "permission_resolved",
-            payload: {
-              requestId: req.requestId,
-              decision,
-              remember: resolution.remember ?? null,
-            },
+            type: "model_timeout",
+            payload: { message },
           });
         }
-
-        if (decision !== "allow") {
-          const err = `Permission ${decision} for ${toolCall.tool}`;
-          messages.push({
-            role: "tool",
-            content: JSON.stringify({
-              tool: toolCall.tool,
-              ok: false,
-              error: err,
-            }),
-          });
-          options.onEvent?.({ type: "error", payload: { message: err } });
-          continue;
-        }
-
-        options.onEvent?.({ type: "tool_call", payload: toolCall });
-
-        try {
-          const result = await toolRuntime.executeTool(
-            toolCall.tool,
-            toolCall.arguments,
-            options.cwd,
-          );
-
-          messages.push({ role: "assistant", content: JSON.stringify(toolCall) });
-          messages.push({
-            role: "tool",
-            content: JSON.stringify({ tool: toolCall.tool, ok: true, result }),
-          });
-          options.onEvent?.({
-            type: "tool_result",
-            payload: { tool: toolCall.tool, result },
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          messages.push({
-            role: "tool",
-            content: JSON.stringify({ tool: toolCall.tool, ok: false, error: message }),
-          });
-          options.onEvent?.({ type: "error", payload: { message } });
-        }
+        options.onEvent?.({
+          type: "run_failed",
+          payload: { message },
+        });
+        throw error;
       }
-
-      const fallback = "Stopped: max steps reached";
-      options.onEvent?.({ type: "done", payload: { reason: "max_steps" } });
-      return { text: fallback, messages, policy };
     } finally {
       if (!options.toolRuntime) {
         await toolRuntime.close();
