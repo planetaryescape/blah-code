@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/planetaryescape/blah-code/compare/cli-v0.6.1...cli-v0.6.2) (2026-02-08)
+
+
+### Bug Fixes
+
+* harden npm publish against otp failures ([ec2773a](https://github.com/planetaryescape/blah-code/commit/ec2773acfaf859a26244f54542f4ecf80422853a))
+* harden npm publish against otp failures ([20d70f1](https://github.com/planetaryescape/blah-code/commit/20d70f185eea11a89559e24c95011e51dee0183a))
+
 ## [0.6.1](https://github.com/planetaryescape/blah-code/compare/cli-v0.6.0...cli-v0.6.1) (2026-02-08)
 
 
