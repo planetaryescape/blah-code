@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.4.0...cli-v0.5.0) (2026-02-08)
+
+
+### Features
+
+* harden blah-code TUI UX and session observability ([76c1cd6](https://github.com/planetaryescape/blah-code/commit/76c1cd6921aee1e538faf0a89fd4ed251ee31996))
+* harden tui chat UX and session observability ([4b1417c](https://github.com/planetaryescape/blah-code/commit/4b1417c6460992b80ae0ec6e1d25e82510f11c14))
+
 ## [0.4.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.3.0...cli-v0.4.0) (2026-02-08)
 
 
