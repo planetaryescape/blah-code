@@ -1,148 +1,222 @@
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import type { TuiEvent } from "../state";
-import { formatEvent } from "../state";
 
 interface EventTimelineProps {
   events: TuiEvent[];
   streamingText?: string;
+  showSystemStream?: boolean;
+}
+
+interface ChatRow {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: number;
+}
+
+interface SystemRow {
+  id: string;
+  kind: string;
+  text: string;
+  createdAt: number;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function stringifyPayload(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+  if (typeof payload === "number" || typeof payload === "boolean") return String(payload);
+  if (typeof payload === "object" && payload !== null) return JSON.stringify(payload);
+  return "";
+}
+
+function compact(value: string, max = 240): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+}
+
+function formatClock(ts: number): string {
+  return new Date(ts).toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function textForEvent(event: TuiEvent): string {
+  const payload = asRecord(event.payload);
+  const directText = typeof payload.text === "string" ? payload.text : "";
+  if (directText.trim()) return directText;
+
+  if (event.kind === "tool_call") {
+    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+    const args = stringifyPayload(payload.arguments ?? payload.input ?? payload.args ?? {});
+    return compact(`${tool} ${args}`.trim());
+  }
+
+  if (event.kind === "tool_result") {
+    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+    const result = stringifyPayload(payload.result ?? payload.output ?? {});
+    return compact(`${tool} ${result}`.trim());
+  }
+
+  if (event.kind === "run_failed" || event.kind === "error" || event.kind === "model_timeout") {
+    const message = typeof payload.message === "string" ? payload.message : stringifyPayload(payload);
+    return compact(message);
+  }
+
+  return compact(stringifyPayload(event.payload));
+}
+
+function systemLabel(event: TuiEvent): string {
+  switch (event.kind) {
+    case "run_started":
+      return "run started";
+    case "run_finished":
+    case "done":
+      return "run finished";
+    case "tool_call":
+      return "tool call";
+    case "tool_result":
+      return "tool result";
+    case "permission_request":
+      return "permission";
+    case "permission_resolved":
+      return "permission resolved";
+    case "model_timeout":
+      return "model timeout";
+    case "run_failed":
+    case "error":
+      return "error";
+    default:
+      return event.kind;
+  }
 }
 
 export function EventTimeline(props: EventTimelineProps) {
+  const chatRows = createMemo<ChatRow[]>(() => {
+    const rows: ChatRow[] = [];
+    for (const event of props.events) {
+      if (event.kind !== "user" && event.kind !== "assistant") continue;
+      const text = textForEvent(event);
+      if (!text) continue;
+      rows.push({
+        id: event.id,
+        role: event.kind,
+        text,
+        createdAt: event.createdAt,
+      });
+    }
+    return rows;
+  });
+
+  const systemRows = createMemo<SystemRow[]>(() => {
+    const rows: SystemRow[] = [];
+    for (const event of props.events) {
+      if (event.kind === "user" || event.kind === "assistant" || event.kind === "assistant_delta") continue;
+      rows.push({
+        id: event.id,
+        kind: systemLabel(event),
+        text: textForEvent(event),
+        createdAt: event.createdAt,
+      });
+    }
+    return rows;
+  });
+
   return (
-    <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
-      <Show when={props.events.length === 0 && (!props.streamingText || props.streamingText.trim().length === 0)}>
+    <box flexDirection="column" flexGrow={1}>
+      <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" border borderColor="#1e293b" padding={1}>
+        <Show when={chatRows().length === 0 && (!props.streamingText || props.streamingText.trim().length === 0)}>
+          <box flexDirection="column" marginBottom={1}>
+            <text fg="#f8fafc" attributes={1}>
+              Start a conversation
+            </text>
+            <text fg="#94a3b8">Enter sends. Shift+Enter newline. Ctrl+K opens command palette.</text>
+            <text fg="#64748b">Try: tell me what this repo does</text>
+          </box>
+        </Show>
+
+        <For each={chatRows()}>
+          {(row) => {
+            const isUser = row.role === "user";
+            const lines = () => row.text.split("\n");
+            return (
+              <box alignItems={isUser ? "flex-end" : "flex-start"} marginBottom={1}>
+                <box
+                  width={isUser ? "78%" : "88%"}
+                  flexDirection="column"
+                  border
+                  borderColor={isUser ? "#3b82f6" : "#334155"}
+                  backgroundColor={isUser ? "#0f2146" : "#111827"}
+                  paddingLeft={1}
+                  paddingRight={1}
+                >
+                  <text fg={isUser ? "#bfdbfe" : "#e2e8f0"} attributes={1}>
+                    {isUser ? "you" : "assistant"} · {formatClock(row.createdAt)}
+                  </text>
+                  <For each={lines()}>
+                    {(line) => <text fg={isUser ? "#dbeafe" : "#f8fafc"}>{line || " "}</text>}
+                  </For>
+                </box>
+              </box>
+            );
+          }}
+        </For>
+
+        <Show when={props.streamingText && props.streamingText.trim().length > 0}>
+          <box alignItems="flex-start" marginBottom={1}>
+            <box
+              width="88%"
+              flexDirection="column"
+              border
+              borderColor="#f59e0b"
+              backgroundColor="#1a2438"
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              <text fg="#fbbf24" attributes={1}>
+                assistant · streaming
+              </text>
+              <text fg="#f8fafc">{props.streamingText}</text>
+            </box>
+          </box>
+        </Show>
+      </scrollbox>
+
+      <Show when={props.showSystemStream}>
         <box
           flexDirection="column"
           border
-          borderColor="#334155"
-          backgroundColor="#0f172a"
-          paddingLeft={2}
-          paddingRight={2}
-          paddingTop={1}
-          paddingBottom={1}
-          marginBottom={1}
+          borderColor="#1e293b"
+          backgroundColor="#020617"
+          marginTop={1}
+          paddingLeft={1}
+          paddingRight={1}
+          minHeight={4}
+          maxHeight={8}
         >
-          <text fg="#f8fafc" attributes={1}>
-            Welcome to blah-code
+          <text fg="#94a3b8" attributes={1}>
+            system stream
           </text>
-          <text fg="#94a3b8">Enter to send. Ctrl+K opens command palette.</text>
-          <text fg="#94a3b8">Try: tell me what this repo does</text>
+          <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
+            <For each={systemRows()}>
+              {(row) => (
+                <box flexDirection="row">
+                  <text fg="#475569">{formatClock(row.createdAt)} </text>
+                  <text fg={row.kind === "error" ? "#fca5a5" : "#93c5fd"}>{row.kind}</text>
+                  <Show when={row.text}>
+                    <text fg="#94a3b8">{` · ${row.text}`}</text>
+                  </Show>
+                </box>
+              )}
+            </For>
+          </scrollbox>
         </box>
       </Show>
-      <For each={props.events}>
-        {(event) => {
-          const item = formatEvent(event);
-          if (!item) return null;
-          const lines = () => (item.body ? item.body.split("\n") : []);
-
-          if (item.variant === "user") {
-            return (
-              <box alignItems="flex-end" marginBottom={1}>
-                <box
-                  width="80%"
-                  flexDirection="column"
-                  border
-                  borderColor={item.accent ?? "#2563eb"}
-                  backgroundColor="#172554"
-                  paddingLeft={1}
-                  paddingRight={1}
-                >
-                  <text fg={item.color} attributes={1}>
-                    {item.header}
-                  </text>
-                  <For each={lines()}>
-                    {(line) => <text fg={item.color}>{line || " "}</text>}
-                  </For>
-                </box>
-              </box>
-            );
-          }
-
-          if (item.variant === "assistant") {
-            return (
-              <box alignItems="flex-start" marginBottom={1}>
-                <box
-                  width="88%"
-                  flexDirection="column"
-                  border
-                  borderColor={item.accent ?? "#334155"}
-                  backgroundColor="#111827"
-                  paddingLeft={1}
-                  paddingRight={1}
-                >
-                  <text fg={item.color} attributes={1}>
-                    {item.header}
-                  </text>
-                  <For each={lines()}>
-                    {(line) => <text fg={item.color}>{line || " "}</text>}
-                  </For>
-                </box>
-              </box>
-            );
-          }
-
-          if (item.variant === "tool") {
-            return (
-              <box
-                flexDirection="column"
-                border
-                borderColor={item.accent ?? "#1d4ed8"}
-                backgroundColor="#0b1220"
-                paddingLeft={1}
-                paddingRight={1}
-                marginBottom={1}
-              >
-                <text fg={item.color} attributes={1}>
-                  {item.header}
-                </text>
-                <For each={lines()}>
-                  {(line) => <text fg="#bfdbfe">{line || " "}</text>}
-                </For>
-              </box>
-            );
-          }
-
-          return (
-            <box
-              flexDirection="row"
-              border
-              borderColor={item.accent ?? "#3f3f46"}
-              backgroundColor={item.variant === "error" ? "#2a0e11" : "#0f172a"}
-              paddingLeft={1}
-              paddingRight={1}
-              marginBottom={1}
-            >
-              <text fg={item.variant === "error" ? "#fca5a5" : "#93c5fd"}>{item.variant === "error" ? "x " : "- "}</text>
-              <box flexDirection="column">
-                <text fg={item.color} attributes={1}>
-                  {item.header}
-                </text>
-                <For each={lines()}>
-                  {(line) => <text fg={item.color}>{line || " "}</text>}
-                </For>
-              </box>
-            </box>
-          );
-        }}
-      </For>
-      <Show when={props.streamingText && props.streamingText.trim().length > 0}>
-        <box alignItems="flex-start" marginBottom={1}>
-          <box
-            width="88%"
-            flexDirection="column"
-            border
-            borderColor="#7c3aed"
-            backgroundColor="#1e1b4b"
-            paddingLeft={1}
-            paddingRight={1}
-          >
-            <text fg="#c4b5fd" attributes={1}>
-              assistant · streaming
-            </text>
-            <text fg="#ddd6fe">{props.streamingText}</text>
-          </box>
-        </box>
-      </Show>
-    </scrollbox>
+    </box>
   );
 }

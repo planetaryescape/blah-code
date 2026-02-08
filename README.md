@@ -35,11 +35,18 @@ blah-code
 
 `blah-code` (no args) now opens the interactive TUI.
 
+TUI defaults:
+
+- `Enter` send
+- `Shift+Enter` newline
+- `Ctrl+K` command palette
+- first prompt auto-renames the session title (fallback: first prompt words)
+
 Examples:
 
 ```bash
 blah-code run "find auth bugs"
-blah-code run --model openai:gpt-5-mini "refactor this module"
+blah-code run --model zai:glm-4.7 "refactor this module"
 blah-code run --cwd /path/to/repo "add tests for parser"
 blah-code run --json "summarize changes since last commit"
 blah-code status
@@ -69,7 +76,7 @@ Create in project root:
 
 ```json
 {
-  "model": "openai:gpt-5-mini",
+  "model": "zai:glm-4.7",
   "timeout": {
     "modelMs": 120000
   },
@@ -109,6 +116,7 @@ Create in project root:
 - `POST /v1/permissions/rules`
 - `POST /v1/sessions`
 - `GET /v1/sessions?limit=20`
+- `PATCH /v1/sessions/:id`
 - `POST /v1/sessions/:id/prompt`
 - `GET /v1/sessions/:id/events`
 - `GET /v1/sessions/:id/events/stream`

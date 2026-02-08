@@ -28,8 +28,13 @@ export function SessionList(props: SessionListProps) {
   const shortId = (id: string): string =>
     id.length > 18 ? `${id.slice(0, 8)}…${id.slice(id.length - 6)}` : id;
 
+  const displayName = (session: SessionSummary): string => {
+    const name = typeof session.name === "string" ? session.name.trim() : "";
+    return name || shortId(session.id);
+  };
+
   return (
-    <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220" padding={1} width={34}>
+    <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220" padding={1} width={36}>
       <box flexDirection="row">
         <text fg="#e2e8f0" attributes={1}>sessions</text>
         <box flexGrow={1} />
@@ -68,13 +73,14 @@ export function SessionList(props: SessionListProps) {
               }}
             >
               <box flexDirection="row">
-                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{shortId(session.id)}</text>
+                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{displayName(session)}</text>
                 <box flexGrow={1} />
                 <text fg={selected() ? "#bfdbfe" : "#94a3b8"}>{session.eventCount}</text>
               </box>
-              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>
-                {formatSessionTime(session.lastEventAt ?? session.createdAt)}
-              </text>
+              <Show when={session.name}>
+                <text fg={selected() ? "#93c5fd" : "#64748b"}>{shortId(session.id)}</text>
+              </Show>
+              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>{formatSessionTime(session.lastEventAt ?? session.createdAt)}</text>
             </box>
           );
         }}

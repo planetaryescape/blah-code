@@ -1,13 +1,13 @@
-import { render, useKeyboard, useRenderer } from "@opentui/solid";
 import type { PermissionRequest, PermissionResolution } from "@blah-code/core";
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import type { SessionSummary } from "@blah-code/session";
+import { render, useKeyboard, useRenderer } from "@opentui/solid";
+import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { EventTimeline } from "./components/EventTimeline";
 import { PermissionModal } from "./components/PermissionModal";
 import { SessionList } from "./components/SessionList";
 import { StatusPanel } from "./components/StatusPanel";
-import { createRuntimeClient } from "./runtime";
-import type { RuntimeClient } from "./runtime";
+import { createRuntimeClient, type RuntimeClient } from "./runtime";
 import type { TuiEvent } from "./state";
 
 interface RunTuiOptions {
@@ -23,12 +23,55 @@ interface TuiAppProps {
   timeoutMs?: number;
 }
 
+function normalizeTitle(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const clean = value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/["'`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return null;
+  const words = clean.split(" ").slice(0, 6);
+  const title = words.join(" ").replace(/[.,;:!?-]+$/g, "").trim();
+  return title || null;
+}
+
+function fallbackTitle(prompt: string): string {
+  const words = prompt
+    .replace(/[\r\n]+/g, " ")
+    .replace(/["'`]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+  return words.join(" ").trim() || "new session";
+}
+
+function sortEvents(events: TuiEvent[]): TuiEvent[] {
+  return [...events].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function mergeEvents(current: TuiEvent[], incoming: TuiEvent[]): TuiEvent[] {
+  const merged = new Map<string, TuiEvent>();
+  for (const event of current) merged.set(event.id, event);
+  for (const event of incoming) merged.set(event.id, event);
+  return sortEvents(Array.from(merged.values()));
+}
+
+function payloadText(event: TuiEvent): string {
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as { text?: string })
+      : {};
+  return typeof payload.text === "string" ? payload.text : "";
+}
+
 function TuiApp(props: TuiAppProps) {
   const renderer = useRenderer();
 
-  const [sessions, setSessions] = createSignal<
-    Array<{ id: string; createdAt: number; lastEventAt: number | null; eventCount: number }>
-  >([]);
+  const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
   const [events, setEvents] = createSignal<TuiEvent[]>([]);
   const [prompt, setPrompt] = createSignal("");
@@ -39,22 +82,45 @@ function TuiApp(props: TuiAppProps) {
   const [logs, setLogs] = createSignal<string[]>([]);
   const [showStatus, setShowStatus] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
+  const [showSystemStream, setShowSystemStream] = createSignal(false);
   const [pendingPermission, setPendingPermission] = createSignal<PermissionRequest | null>(null);
   const [modelId, setModelId] = createSignal(props.modelId ?? "");
 
   let inputRef: any;
   let pendingResolver: ((resolution: PermissionResolution) => void) | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
+  const titleInFlight = new Set<string>();
 
-  const selectedSession = createMemo(() => sessions().find((session) => session.id === selectedSessionId()));
-  const shortSessionId = createMemo(() => {
-    const sessionId = selectedSession()?.id;
-    if (!sessionId) return "none";
-    return sessionId.length > 20 ? `${sessionId.slice(0, 8)}…${sessionId.slice(sessionId.length - 6)}` : sessionId;
+  const selectedSession = createMemo(() =>
+    sessions().find((session) => session.id === selectedSessionId()),
+  );
+
+  const sessionDisplayLabel = createMemo(() => {
+    const session = selectedSession();
+    if (!session) return "none";
+    const title = normalizeTitle(session.name);
+    if (title) return title;
+    return session.id.length > 20
+      ? `${session.id.slice(0, 8)}…${session.id.slice(session.id.length - 6)}`
+      : session.id;
   });
+
+  function focusInputSoon() {
+    setTimeout(() => {
+      if (inputRef && !inputRef.isDestroyed) inputRef.focus();
+    }, 1);
+  }
+
+  async function refreshEvents(sessionId: string) {
+    const loaded = await props.runtime.listEvents(sessionId);
+    setStreamingText("");
+    setEvents(sortEvents(loaded));
+  }
 
   function selectSession(sessionId: string) {
     setSelectedSessionId(sessionId);
+    setStreamingText("");
+    setEvents([]);
     refreshEvents(sessionId).catch((refreshError) => {
       const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
       setError(message);
@@ -62,7 +128,7 @@ function TuiApp(props: TuiAppProps) {
   }
 
   async function refreshSessions() {
-    const listed = await props.runtime.listSessions(40);
+    const listed = await props.runtime.listSessions(60);
     setSessions(listed);
 
     if (!selectedSessionId() && listed[0]) {
@@ -76,20 +142,14 @@ function TuiApp(props: TuiAppProps) {
     }
   }
 
-  async function refreshEvents(sessionId: string) {
-    setEvents(await props.runtime.listEvents(sessionId));
-  }
-
   async function refreshStatus() {
     const nextStatus = await props.runtime.getStatus();
     setStatus(nextStatus);
-    if (!modelId()) {
-      setModelId(nextStatus.modelId);
-    }
+    if (!modelId()) setModelId(nextStatus.modelId);
   }
 
   async function refreshLogs() {
-    setLogs(await props.runtime.getLogs(30));
+    setLogs(await props.runtime.getLogs(40));
   }
 
   async function createSession() {
@@ -107,7 +167,6 @@ function TuiApp(props: TuiAppProps) {
     const next = ((start + offset) % list.length + list.length) % list.length;
     const sessionId = list[next]?.id;
     if (!sessionId) return;
-
     selectSession(sessionId);
   }
 
@@ -115,21 +174,21 @@ function TuiApp(props: TuiAppProps) {
     if (event.sessionId !== selectedSessionId()) return;
 
     if (event.kind === "assistant_delta") {
-      const payload =
-        typeof event.payload === "object" && event.payload !== null
-          ? (event.payload as { text?: string })
-          : {};
-      if (payload.text) {
-        setStreamingText((current) => current + payload.text);
-      }
+      const text = payloadText(event);
+      if (text) setStreamingText((current) => current + text);
       return;
     }
 
-    if (event.kind === "assistant" || event.kind === "run_finished" || event.kind === "run_failed") {
+    if (
+      event.kind === "assistant" ||
+      event.kind === "run_finished" ||
+      event.kind === "run_failed" ||
+      event.kind === "done"
+    ) {
       setStreamingText("");
     }
 
-    setEvents((current) => [...current, event]);
+    setEvents((current) => mergeEvents(current, [event]));
   }
 
   function requestPermission(request: PermissionRequest): Promise<PermissionResolution> {
@@ -168,6 +227,11 @@ function TuiApp(props: TuiAppProps) {
       return true;
     }
 
+    if (command === "events") {
+      setShowSystemStream((prev) => !prev);
+      return true;
+    }
+
     if (command === "logs") {
       await refreshLogs();
       setShowStatus(true);
@@ -202,10 +266,32 @@ function TuiApp(props: TuiAppProps) {
     { id: "new", title: "new session", hint: "create and switch", keybind: "ctrl+n", category: "session" },
     { id: "sessions prev", title: "previous session", hint: "cycle backward", keybind: "ctrl+p", category: "session" },
     { id: "sessions next", title: "next session", hint: "cycle forward", keybind: "ctrl+shift+n", category: "session" },
+    { id: "events", title: `${showSystemStream() ? "hide" : "show"} system stream`, keybind: "ctrl+e", category: "view" },
     { id: "status", title: `${showStatus() ? "hide" : "show"} status panel`, keybind: "ctrl+s", category: "view" },
-    { id: "logs", title: "refresh logs", hint: "open status logs", keybind: "ctrl+l", category: "runtime" },
+    { id: "logs", title: "refresh logs", hint: "open runtime logs", keybind: "ctrl+l", category: "runtime" },
     { id: "quit", title: "quit", keybind: "ctrl+q", category: "app" },
   ]);
+
+  async function maybeAutoRenameSession(sessionId: string, promptText: string) {
+    const session = sessions().find((entry) => entry.id === sessionId);
+    if (!session) return;
+    if (normalizeTitle(session.name)) return;
+    if (titleInFlight.has(sessionId)) return;
+
+    titleInFlight.add(sessionId);
+    try {
+      const fallback = fallbackTitle(promptText);
+      const suggested = normalizeTitle(await props.runtime.suggestSessionName(promptText));
+      const finalTitle = suggested ?? fallback;
+      if (!finalTitle) return;
+      await props.runtime.renameSession(sessionId, finalTitle);
+      await refreshSessions();
+    } catch {
+      // Keep chat flow unblocked if title generation fails.
+    } finally {
+      titleInFlight.delete(sessionId);
+    }
+  }
 
   async function submitPrompt() {
     const value = prompt().trim();
@@ -213,6 +299,7 @@ function TuiApp(props: TuiAppProps) {
 
     setError(null);
     setPrompt("");
+    inputRef?.clear?.();
 
     if (value.startsWith("/")) {
       await handleCommand(value);
@@ -226,17 +313,7 @@ function TuiApp(props: TuiAppProps) {
     }
     if (!sessionId) return;
 
-    setEvents((current) => [
-      ...current,
-      {
-        id: `local-${Date.now()}`,
-        sessionId,
-        kind: "user",
-        payload: { text: value },
-        createdAt: Date.now(),
-      },
-    ]);
-
+    void maybeAutoRenameSession(sessionId, value);
     setRunning(true);
     setStreamingText("");
 
@@ -299,12 +376,24 @@ function TuiApp(props: TuiAppProps) {
       return;
     }
 
+    if (withCtrl && evt.name === "e") {
+      evt.preventDefault();
+      setShowSystemStream((prev) => !prev);
+      return;
+    }
+
     if (withCtrl && evt.name === "l") {
       evt.preventDefault();
       Promise.all([refreshSessions(), refreshStatus(), refreshLogs()]).catch((refreshError) => {
         const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
         setError(message);
       });
+      return;
+    }
+
+    if (withCtrl && evt.name === "s") {
+      evt.preventDefault();
+      setShowStatus((prev) => !prev);
       return;
     }
 
@@ -317,22 +406,7 @@ function TuiApp(props: TuiAppProps) {
     if (withCtrl && evt.name === "down") {
       evt.preventDefault();
       cycleSession(1);
-      return;
     }
-
-    if (withCtrl && evt.name === "s") {
-      evt.preventDefault();
-      setShowStatus((prev) => !prev);
-    }
-  });
-
-  createEffect(() => {
-    const sessionId = selectedSessionId();
-    if (!sessionId) return;
-    refreshEvents(sessionId).catch((refreshError) => {
-      const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
-      setError(message);
-    });
   });
 
   onMount(async () => {
@@ -342,9 +416,7 @@ function TuiApp(props: TuiAppProps) {
     statusTimer = setInterval(() => {
       refreshStatus().catch(() => undefined);
     }, 5000);
-    setTimeout(() => {
-      if (inputRef && !inputRef.isDestroyed) inputRef.focus();
-    }, 1);
+    focusInputSoon();
   });
 
   onCleanup(() => {
@@ -367,24 +439,18 @@ function TuiApp(props: TuiAppProps) {
         <box flexGrow={1} />
         <text fg="#94a3b8">model: {modelId() || "default"}</text>
         <text fg="#64748b"> · </text>
-        <text fg="#bfdbfe">session: {shortSessionId()}</text>
+        <text fg="#bfdbfe">session: {sessionDisplayLabel()}</text>
       </box>
 
-      <box flexGrow={1} gap={1}>
-        <SessionList
-          sessions={sessions()}
-          selectedSessionId={selectedSessionId()}
-          onSelect={(id) => {
-            selectSession(id);
-          }}
-        />
+      <box flexGrow={1} flexDirection="row" gap={1}>
+        <SessionList sessions={sessions()} selectedSessionId={selectedSessionId()} onSelect={selectSession} />
 
         <box
           flexDirection="column"
           flexGrow={1}
           border
           borderColor="#334155"
-          backgroundColor="#030712"
+          backgroundColor="#020b1b"
           padding={1}
         >
           <box flexDirection="row">
@@ -392,7 +458,11 @@ function TuiApp(props: TuiAppProps) {
             <box flexGrow={1} />
             <text fg={running() ? "#fbbf24" : "#64748b"}>{running() ? "responding" : "idle"}</text>
           </box>
-          <EventTimeline events={events()} streamingText={streamingText()} />
+          <EventTimeline
+            events={events()}
+            streamingText={streamingText()}
+            showSystemStream={showSystemStream()}
+          />
         </box>
 
         <Show when={showStatus()}>
@@ -417,15 +487,22 @@ function TuiApp(props: TuiAppProps) {
           backgroundColor="#020617"
           paddingLeft={1}
           paddingRight={1}
+          minHeight={3}
         >
           <text fg={running() ? "#fbbf24" : "#64748b"}>{"> "}</text>
-          <input
+          <textarea
             ref={(value: unknown) => {
               inputRef = value;
             }}
-            value={prompt()}
-            placeholder="Ask anything... (Enter send, /help commands, Ctrl+K palette)"
-            onInput={(value: string) => setPrompt(value)}
+            flexGrow={1}
+            initialValue=""
+            placeholder="Ask anything…"
+            wrapMode="word"
+            keyBindings={[
+              { name: "return", action: "submit" },
+              { name: "return", shift: true, action: "newline" },
+            ]}
+            onContentChange={() => setPrompt(inputRef?.plainText ?? "")}
             onSubmit={() => {
               submitPrompt().catch((submitError) => {
                 const message = submitError instanceof Error ? submitError.message : String(submitError);
@@ -434,11 +511,11 @@ function TuiApp(props: TuiAppProps) {
             }}
           />
           <Show when={running()}>
-            <text fg="#fbbf24"> thinking...</text>
+            <text fg="#fbbf24"> thinking…</text>
           </Show>
         </box>
         <text fg="#64748b">
-          enter send · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
+          enter send · shift+enter newline · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+e system · ctrl+s status · ctrl+q quit
         </text>
         <Show when={error()}>
           <text fg="#fca5a5">{error()}</text>
@@ -450,9 +527,7 @@ function TuiApp(props: TuiAppProps) {
           commands={paletteCommands()}
           onClose={() => {
             setShowPalette(false);
-            setTimeout(() => {
-              if (inputRef && !inputRef.isDestroyed) inputRef.focus();
-            }, 1);
+            focusInputSoon();
           }}
           onSelect={(commandId) => {
             handleCommand(`/${commandId}`)
@@ -462,9 +537,7 @@ function TuiApp(props: TuiAppProps) {
               })
               .finally(() => {
                 setShowPalette(false);
-                setTimeout(() => {
-                  if (inputRef && !inputRef.isDestroyed) inputRef.focus();
-                }, 1);
+                focusInputSoon();
               });
           }}
         />
