@@ -37,7 +37,7 @@ function TuiApp(props: TuiAppProps) {
   const [streamingText, setStreamingText] = createSignal("");
   const [status, setStatus] = createSignal<Awaited<ReturnType<RuntimeClient["getStatus"]>> | null>(null);
   const [logs, setLogs] = createSignal<string[]>([]);
-  const [showStatus, setShowStatus] = createSignal(true);
+  const [showStatus, setShowStatus] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
   const [pendingPermission, setPendingPermission] = createSignal<PermissionRequest | null>(null);
   const [modelId, setModelId] = createSignal(props.modelId ?? "");
@@ -47,6 +47,11 @@ function TuiApp(props: TuiAppProps) {
   let statusTimer: ReturnType<typeof setInterval> | null = null;
 
   const selectedSession = createMemo(() => sessions().find((session) => session.id === selectedSessionId()));
+  const shortSessionId = createMemo(() => {
+    const sessionId = selectedSession()?.id;
+    if (!sessionId) return "none";
+    return sessionId.length > 20 ? `${sessionId.slice(0, 8)}…${sessionId.slice(sessionId.length - 6)}` : sessionId;
+  });
 
   function selectSession(sessionId: string) {
     setSelectedSessionId(sessionId);
@@ -194,12 +199,12 @@ function TuiApp(props: TuiAppProps) {
   }
 
   const paletteCommands = createMemo<PaletteCommand[]>(() => [
-    { id: "new", title: "new session", hint: "create and switch", keybind: "ctrl+n" },
-    { id: "sessions prev", title: "previous session", hint: "cycle backward", keybind: "ctrl+p" },
-    { id: "sessions next", title: "next session", hint: "cycle forward", keybind: "ctrl+shift+n" },
-    { id: "status", title: `${showStatus() ? "hide" : "show"} status panel`, keybind: "ctrl+s" },
-    { id: "logs", title: "refresh logs", hint: "open status logs", keybind: "ctrl+l" },
-    { id: "quit", title: "quit", keybind: "ctrl+q" },
+    { id: "new", title: "new session", hint: "create and switch", keybind: "ctrl+n", category: "session" },
+    { id: "sessions prev", title: "previous session", hint: "cycle backward", keybind: "ctrl+p", category: "session" },
+    { id: "sessions next", title: "next session", hint: "cycle forward", keybind: "ctrl+shift+n", category: "session" },
+    { id: "status", title: `${showStatus() ? "hide" : "show"} status panel`, keybind: "ctrl+s", category: "view" },
+    { id: "logs", title: "refresh logs", hint: "open status logs", keybind: "ctrl+l", category: "runtime" },
+    { id: "quit", title: "quit", keybind: "ctrl+q", category: "app" },
   ]);
 
   async function submitPrompt() {
@@ -208,9 +213,6 @@ function TuiApp(props: TuiAppProps) {
 
     setError(null);
     setPrompt("");
-    if (inputRef && !inputRef.isDestroyed && typeof inputRef.clear === "function") {
-      inputRef.clear();
-    }
 
     if (value.startsWith("/")) {
       await handleCommand(value);
@@ -351,7 +353,23 @@ function TuiApp(props: TuiAppProps) {
   });
 
   return (
-    <box flexDirection="column" height="100%">
+    <box flexDirection="column" height="100%" backgroundColor="#020617">
+      <box
+        flexDirection="row"
+        border
+        borderColor="#334155"
+        backgroundColor="#0b1220"
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg="#86efac" attributes={1}>blah code</text>
+        <text fg="#64748b"> · opencode mode</text>
+        <box flexGrow={1} />
+        <text fg="#94a3b8">model: {modelId() || "default"}</text>
+        <text fg="#64748b"> · </text>
+        <text fg="#bfdbfe">session: {shortSessionId()}</text>
+      </box>
+
       <box flexGrow={1} gap={1}>
         <SessionList
           sessions={sessions()}
@@ -361,11 +379,18 @@ function TuiApp(props: TuiAppProps) {
           }}
         />
 
-        <box flexDirection="column" flexGrow={1} border borderColor="#3f3f46" padding={1}>
+        <box
+          flexDirection="column"
+          flexGrow={1}
+          border
+          borderColor="#334155"
+          backgroundColor="#030712"
+          padding={1}
+        >
           <box flexDirection="row">
-            <text attributes={1}>session: {selectedSession()?.id ?? "none"}</text>
+            <text fg="#e2e8f0" attributes={1}>conversation</text>
             <box flexGrow={1} />
-            <text fg={running() ? "#fbbf24" : "#71717a"}>{running() ? "running" : "idle"}</text>
+            <text fg={running() ? "#fbbf24" : "#64748b"}>{running() ? "responding" : "idle"}</text>
           </box>
           <EventTimeline events={events()} streamingText={streamingText()} />
         </box>
@@ -375,36 +400,45 @@ function TuiApp(props: TuiAppProps) {
         </Show>
       </box>
 
-      <box flexDirection="column" border borderColor="#3f3f46" padding={1}>
-        <textarea
-          ref={(value: unknown) => {
-            inputRef = value;
-          }}
-          height={4}
-          placeholder="Prompt (Ctrl+Enter send, Ctrl+K palette, commands: /help /new /sessions /status /logs /model /quit)"
-          textColor="#e4e4e7"
-          focusedTextColor="#e4e4e7"
-          cursorColor="#93c5fd"
-          initialValue={prompt()}
-          onContentChange={() => {
-            setPrompt(typeof inputRef?.plainText === "string" ? inputRef.plainText : "");
-          }}
-          onSubmit={() => {
-            submitPrompt().catch((submitError) => {
-              const message = submitError instanceof Error ? submitError.message : String(submitError);
-              setError(message);
-            });
-          }}
-          keyBindings={[
-            {
-              name: "return",
-              ctrl: true,
-              action: "submit",
-            },
-          ]}
-        />
-        <text fg="#71717a">
-          ctrl+k palette · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
+      <box
+        flexDirection="column"
+        border
+        borderColor="#334155"
+        backgroundColor="#0b1220"
+        paddingLeft={1}
+        paddingRight={1}
+        paddingTop={1}
+        paddingBottom={1}
+      >
+        <box
+          flexDirection="row"
+          border
+          borderColor={running() ? "#f59e0b" : "#1e293b"}
+          backgroundColor="#020617"
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <text fg={running() ? "#fbbf24" : "#64748b"}>{"> "}</text>
+          <input
+            ref={(value: unknown) => {
+              inputRef = value;
+            }}
+            value={prompt()}
+            placeholder="Ask anything... (Enter send, /help commands, Ctrl+K palette)"
+            onInput={(value: string) => setPrompt(value)}
+            onSubmit={() => {
+              submitPrompt().catch((submitError) => {
+                const message = submitError instanceof Error ? submitError.message : String(submitError);
+                setError(message);
+              });
+            }}
+          />
+          <Show when={running()}>
+            <text fg="#fbbf24"> thinking...</text>
+          </Show>
+        </box>
+        <text fg="#64748b">
+          enter send · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
         </text>
         <Show when={error()}>
           <text fg="#fca5a5">{error()}</text>

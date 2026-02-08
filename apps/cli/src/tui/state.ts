@@ -7,6 +7,7 @@ export interface TuiEvent {
 }
 
 export interface FormattedEvent {
+  variant: "user" | "assistant" | "tool" | "activity" | "error";
   header: string;
   body?: string;
   color?: string;
@@ -45,16 +46,18 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
   if (event.kind === "assistant") {
     const text = payloadText(payload);
     return {
+      variant: "assistant",
       header: `assistant · ${time}`,
       body: text || "(empty assistant response)",
-      color: "#e4e4e7",
-      accent: "#52525b",
+      color: "#f4f4f5",
+      accent: "#334155",
     };
   }
 
   if (event.kind === "user") {
     const text = payloadText(payload);
     return {
+      variant: "user",
       header: `you · ${time}`,
       body: text || "(empty message)",
       color: "#dbeafe",
@@ -66,6 +69,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
     const tool = typeof payload.tool === "string" ? payload.tool : "tool";
     const input = asRecord(payload.input ?? payload.args);
     return {
+      variant: "tool",
       header: `tool call · ${tool} · ${time}`,
       body:
         Object.keys(input).length > 0 ? truncateText(JSON.stringify(input)) : undefined,
@@ -79,10 +83,11 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
     const output =
       typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output ?? {});
     return {
+      variant: "tool",
       header: `tool result · ${tool} · ${time}`,
       body: truncateText(output),
       color: "#86efac",
-      accent: "#16a34a",
+      accent: "#15803d",
     };
   }
 
@@ -90,6 +95,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
     const tool = typeof payload.tool === "string" ? payload.tool : "unknown";
     const target = typeof payload.target === "string" ? payload.target : "";
     return {
+      variant: "activity",
       header: `permission required · ${time}`,
       body: `${tool} ${target}`.trim(),
       color: "#fbbf24",
@@ -100,6 +106,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
   if (event.kind === "permission_resolved") {
     const decision = typeof payload.decision === "string" ? payload.decision : "unknown";
     return {
+      variant: "activity",
       header: `permission ${decision} · ${time}`,
       color: decision === "allow" ? "#86efac" : "#fca5a5",
       accent: decision === "allow" ? "#16a34a" : "#dc2626",
@@ -108,6 +115,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
 
   if (event.kind === "run_started") {
     return {
+      variant: "activity",
       header: `run started · ${time}`,
       body: truncateText(JSON.stringify(payload)),
       color: "#a5b4fc",
@@ -117,6 +125,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
 
   if (event.kind === "run_finished" || event.kind === "done") {
     return {
+      variant: "activity",
       header: `run finished · ${time}`,
       color: "#86efac",
       accent: "#16a34a",
@@ -126,6 +135,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
   if (event.kind === "run_failed" || event.kind === "error" || event.kind === "model_timeout") {
     const message = typeof payload.message === "string" ? payload.message : event.kind;
     return {
+      variant: "error",
       header: `error · ${time}`,
       body: message,
       color: "#fca5a5",
@@ -134,6 +144,7 @@ export function formatEvent(event: TuiEvent): FormattedEvent | null {
   }
 
   return {
+    variant: "activity",
     header: `${event.kind} · ${time}`,
     body: truncateText(JSON.stringify(event.payload)),
     color: "#a1a1aa",

@@ -39,20 +39,25 @@ export function PermissionModal(props: PermissionModalProps) {
       zIndex={20}
       border
       borderStyle="double"
-      borderColor="#fbbf24"
-      backgroundColor="#18181b"
+      borderColor="#f59e0b"
+      backgroundColor="#0b1220"
       width="70%"
-      height={8}
+      height={11}
       left="15%"
-      top="35%"
+      top="30%"
       flexDirection="column"
       padding={1}
     >
-      <text fg="#fbbf24">permission required</text>
-      <text>op: {props.request.op}</text>
-      <text>tool: {props.request.tool}</text>
-      <text>target: {props.request.target}</text>
-      <text fg="#a1a1aa">1 allow once   2 allow always   3 deny</text>
+      <text fg="#fbbf24" attributes={1}>permission required</text>
+      <text fg="#e2e8f0">tool: {props.request.tool}</text>
+      <text fg="#e2e8f0">operation: {props.request.op}</text>
+      <text fg="#94a3b8">target: {props.request.target || "*"}</text>
+      <box marginTop={1} border borderColor="#334155" paddingLeft={1}>
+        <text fg="#fde68a">1 allow once</text>
+        <text fg="#bbf7d0">2 allow always for this target</text>
+        <text fg="#fecaca">3 deny</text>
+      </box>
+      <text fg="#64748b">Esc = deny</text>
     </box>
   );
 }

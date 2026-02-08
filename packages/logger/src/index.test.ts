@@ -21,7 +21,7 @@ describe("logger", () => {
     const dir = makeDir("logger");
     dirs.push(dir);
 
-    initLogging({ dir, level: "debug", print: false });
+    initLogging({ dir, level: "debug", print: false, sync: true });
     const logger = createLogger("test");
     logger.info("hello logger");
     await Bun.sleep(20);
@@ -39,7 +39,7 @@ describe("logger", () => {
     writeFileSync(path.join(dir, "20240102T010101.log"), "b");
     writeFileSync(path.join(dir, "20240103T010101.log"), "c");
 
-    initLogging({ dir, retainFiles: 2 });
+    initLogging({ dir, retainFiles: 2, sync: true });
 
     const rotated = readdirSync(dir).filter((name) => /^\\d{8}T\\d{6}\\.log$/.test(name));
     expect(rotated.length).toBeLessThanOrEqual(2);

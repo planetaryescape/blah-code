@@ -11,6 +11,7 @@ export interface LoggingConfig {
   print?: boolean;
   retainFiles?: number;
   dir?: string;
+  sync?: boolean;
 }
 
 const defaultLogDir = path.join(os.homedir(), ".blah-code", "logs");
@@ -23,12 +24,13 @@ const state: {
     level: LogLevel;
     print: boolean;
     retainFiles: number;
+    sync: boolean;
   };
   dir: string;
   file: string;
 } = {
   root: null,
-  config: { level: "info", print: false, retainFiles: 10 },
+  config: { level: "info", print: false, retainFiles: 10, sync: false },
   dir: defaultLogDir,
   file: path.join(defaultLogDir, currentLogFileName),
 };
@@ -72,7 +74,7 @@ function buildRootLogger(): PinoLogger {
   const destination = pino.destination({
     dest: state.file,
     mkdir: true,
-    sync: false,
+    sync: state.config.sync,
     append: true,
   });
 
@@ -103,6 +105,7 @@ export function initLogging(input?: LoggingConfig): void {
     level: input?.level ?? state.config.level,
     print: input?.print ?? state.config.print,
     retainFiles: input?.retainFiles ?? 10,
+    sync: input?.sync ?? false,
   };
   state.dir = input?.dir ?? defaultLogDir;
   state.file = path.join(state.dir, currentLogFileName);
