@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.5.0...cli-v0.6.0) (2026-02-08)
+
+
+### Features
+
+* daemon-first TUI runtime with always-visible activity signals ([ca44611](https://github.com/planetaryescape/blah-code/commit/ca44611dfd6d59067c12d2edf5c943ca23e8fcba))
+* switch to daemon-first tui runtime ([0b712d7](https://github.com/planetaryescape/blah-code/commit/0b712d78f6b66f840066c78bea5c5a939c0037d8))
+
 ## [0.5.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.4.0...cli-v0.5.0) (2026-02-08)
 
 
