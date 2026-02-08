@@ -232,16 +232,73 @@ async function publishPackage(packageDir: string, dryRun: boolean, tag: string, 
   console.log(`  Publishing ${pkgVersionRef}...`);
   const publishArgs = ["npm", "publish", "--access", "public", "--tag", tag];
   if (otp) publishArgs.push("--otp", otp);
-
   const proc = Bun.spawnSync(publishArgs, {
     cwd: packageDir,
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const stdout = proc.stdout.toString();
+  const stderr = proc.stderr.toString();
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
 
-  if (proc.exitCode !== 0) {
-    throw new Error(`Failed to publish ${packageJson.name}`);
+  if (proc.exitCode === 0) {
+    return;
   }
+
+  const sawOtpError =
+    stderr.includes("code EOTP") ||
+    stderr.toLowerCase().includes("one-time password");
+  const canUseTrustedPublishing =
+    !otp &&
+    Boolean(process.env.GITHUB_ACTIONS) &&
+    Boolean(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+
+  if (sawOtpError && canUseTrustedPublishing) {
+    console.log("  OTP required with token auth. Retrying with npm trusted publishing (OIDC)...");
+    const trustedEnv = {
+      ...process.env,
+      NPM_CONFIG_PROVENANCE: "true",
+      NPM_CONFIG_TOKEN: "",
+      NODE_AUTH_TOKEN: "",
+      NPM_TOKEN: "",
+    };
+    delete trustedEnv.npm_config_token;
+    delete trustedEnv.npm_config_otp;
+    delete trustedEnv.NPM_OTP;
+
+    const trustedProc = Bun.spawnSync(
+      ["npm", "publish", "--access", "public", "--tag", tag, "--provenance"],
+      {
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: trustedEnv,
+      },
+    );
+    const trustedStdout = trustedProc.stdout.toString();
+    const trustedStderr = trustedProc.stderr.toString();
+    if (trustedStdout) process.stdout.write(trustedStdout);
+    if (trustedStderr) process.stderr.write(trustedStderr);
+
+    if (trustedProc.exitCode === 0) {
+      return;
+    }
+
+    throw new Error(
+      `Failed to publish ${packageJson.name} after trusted-publishing retry. ` +
+        "If trusted publishing is not configured in npm, use an npm automation token.",
+    );
+  }
+
+  if (sawOtpError && !otp) {
+    throw new Error(
+      `Failed to publish ${packageJson.name}: npm requires OTP. ` +
+        "Use an npm automation token for CI, configure trusted publishing, or pass --otp.",
+    );
+  }
+
+  throw new Error(`Failed to publish ${packageJson.name}`);
 }
 
 async function main() {
