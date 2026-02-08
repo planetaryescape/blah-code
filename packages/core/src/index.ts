@@ -21,6 +21,7 @@ export interface ModelTransport {
     modelId: string;
     tools: Array<{ name: string; description: string; schema: unknown }>;
     timeoutMs?: number;
+    signal?: AbortSignal;
     onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }>;
 }
@@ -65,6 +66,7 @@ export interface AgentRunOptions {
   cwd: string;
   maxSteps?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
   policy?: unknown;
   toolRuntime?: ToolRuntime;
   onEvent?: (event: AgentEvent) => void;
@@ -145,10 +147,15 @@ export class AgentRunner {
 
       try {
         for (let step = 0; step < maxSteps; step++) {
+          if (options.signal?.aborted) {
+            throw new Error("Run cancelled by user");
+          }
+
           const completion = await this.transport.complete({
             messages,
             modelId: options.modelId,
             timeoutMs: options.timeoutMs,
+            signal: options.signal,
             onDelta(chunk) {
               options.onEvent?.({ type: "assistant_delta", payload: chunk });
             },

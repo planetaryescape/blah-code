@@ -23,6 +23,12 @@ interface TuiAppProps {
   timeoutMs?: number;
 }
 
+interface SessionRunState {
+  phase: "idle" | "running" | "tool" | "failed" | "cancelled";
+  startedAt?: number;
+  message?: string;
+}
+
 function normalizeTitle(value: string | null | undefined): string | null {
   if (!value) return null;
   const clean = value
@@ -68,16 +74,53 @@ function payloadText(event: TuiEvent): string {
   return typeof payload.text === "string" ? payload.text : "";
 }
 
+function asRunState(state: SessionRunState | undefined): SessionRunState {
+  return state ?? { phase: "idle" };
+}
+
+function isCancelMessage(message: string): boolean {
+  return /cancel/i.test(message);
+}
+
+function formatAge(ts: number | null, now: number): string {
+  if (!ts) return "-";
+  return `${Math.max(0, Math.floor((now - ts) / 1000))}s`;
+}
+
+function activityLabel(event: TuiEvent): string {
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as Record<string, unknown>)
+      : {};
+
+  if (event.kind === "tool_call") {
+    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+    return `tool ${tool}`;
+  }
+  if (event.kind === "tool_result") {
+    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+    return `tool done ${tool}`;
+  }
+  if (event.kind === "run_started") return "run started";
+  if (event.kind === "run_finished" || event.kind === "done") return "run finished";
+  if (event.kind === "run_failed") return "run failed";
+  if (event.kind === "model_timeout") return "model timeout";
+  if (event.kind === "error") return "error";
+  if (event.kind === "permission_request") return "permission requested";
+  if (event.kind === "permission_resolved") return "permission resolved";
+  return event.kind;
+}
+
 function TuiApp(props: TuiAppProps) {
   const renderer = useRenderer();
 
   const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
-  const [events, setEvents] = createSignal<TuiEvent[]>([]);
+  const [eventsBySession, setEventsBySession] = createSignal<Record<string, TuiEvent[]>>({});
+  const [streamBySession, setStreamBySession] = createSignal<Record<string, string>>({});
+  const [runStateBySession, setRunStateBySession] = createSignal<Record<string, SessionRunState>>({});
   const [prompt, setPrompt] = createSignal("");
-  const [running, setRunning] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [streamingText, setStreamingText] = createSignal("");
   const [status, setStatus] = createSignal<Awaited<ReturnType<RuntimeClient["getStatus"]>> | null>(null);
   const [logs, setLogs] = createSignal<string[]>([]);
   const [showStatus, setShowStatus] = createSignal(false);
@@ -85,15 +128,128 @@ function TuiApp(props: TuiAppProps) {
   const [showSystemStream, setShowSystemStream] = createSignal(false);
   const [pendingPermission, setPendingPermission] = createSignal<PermissionRequest | null>(null);
   const [modelId, setModelId] = createSignal(props.modelId ?? "");
+  const [clockTick, setClockTick] = createSignal(Date.now());
 
   let inputRef: any;
   let pendingResolver: ((resolution: PermissionResolution) => void) | null = null;
   let statusTimer: ReturnType<typeof setInterval> | null = null;
+  let clockTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshSeq = 0;
+
+  const refreshTokens = new Map<string, number>();
+  const cancelledByUser = new Set<string>();
   const titleInFlight = new Set<string>();
 
   const selectedSession = createMemo(() =>
     sessions().find((session) => session.id === selectedSessionId()),
   );
+
+  const selectedEvents = createMemo(() => {
+    const sessionId = selectedSessionId();
+    if (!sessionId) return [];
+    return eventsBySession()[sessionId] ?? [];
+  });
+
+  const selectedStreamingText = createMemo(() => {
+    const sessionId = selectedSessionId();
+    if (!sessionId) return "";
+    return streamBySession()[sessionId] ?? "";
+  });
+
+  const selectedRunState = createMemo<SessionRunState>(() => {
+    const sessionId = selectedSessionId();
+    if (!sessionId) return { phase: "idle" };
+    return asRunState(runStateBySession()[sessionId]);
+  });
+
+  const running = createMemo(() => {
+    const phase = selectedRunState().phase;
+    return phase === "running" || phase === "tool";
+  });
+
+  const runStatusText = createMemo(() => {
+    const state = selectedRunState();
+    if (state.phase === "running") {
+      const elapsed = state.startedAt
+        ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s`
+        : "0s";
+      return `thinking ${elapsed}`;
+    }
+    if (state.phase === "tool") {
+      const elapsed = state.startedAt
+        ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s`
+        : "0s";
+      return `tool ${elapsed}`;
+    }
+    if (state.phase === "failed") return "failed";
+    if (state.phase === "cancelled") return "cancelled";
+    return "idle";
+  });
+
+  const runStatusColor = createMemo(() => {
+    const state = selectedRunState();
+    if (state.phase === "running") return "#fbbf24";
+    if (state.phase === "tool") return "#93c5fd";
+    if (state.phase === "failed") return "#fca5a5";
+    if (state.phase === "cancelled") return "#f59e0b";
+    return "#64748b";
+  });
+
+  const elapsedRunAge = createMemo(() => {
+    const startedAt = selectedRunState().startedAt;
+    if (!startedAt) return "-";
+    return formatAge(startedAt, clockTick());
+  });
+
+  const runtimeModeText = createMemo(() => (status()?.mode === "daemon" ? "daemon" : "local"));
+  const daemonUp = createMemo(() => status()?.daemonHealthy ?? false);
+  const daemonText = createMemo(() => (daemonUp() ? "up" : "down"));
+
+  const lastEventAt = createMemo(() => {
+    const list = selectedEvents();
+    const last = list.at(-1);
+    return last?.createdAt ?? null;
+  });
+
+  const lastEventAge = createMemo(() => formatAge(lastEventAt(), clockTick()));
+
+  const waitingHint = createMemo(() => {
+    if (!running()) return null;
+    const age = lastEventAt();
+    if (!age) return "waiting for model/tool...";
+    if (clockTick() - age < 3000) return null;
+    return "waiting for model/tool...";
+  });
+
+  const reconnectHint = createMemo(() => {
+    const currentError = error();
+    if (!currentError) return null;
+    if (!/daemon|stream|disconnect|network/i.test(currentError)) return null;
+    return "connection issue. check daemon health with /status or `blah-code status --attach <url>`";
+  });
+
+  const latestActivity = createMemo(() => {
+    const relevant = selectedEvents()
+      .filter((event) =>
+        [
+          "run_started",
+          "tool_call",
+          "tool_result",
+          "permission_request",
+          "permission_resolved",
+          "run_finished",
+          "run_failed",
+          "model_timeout",
+          "error",
+          "done",
+        ].includes(event.kind),
+      )
+      .slice(-4);
+    if (relevant.length === 0) return "no activity";
+    return relevant
+      .map((event) => `${activityLabel(event)} (${new Date(event.createdAt).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })})`)
+      .join(" · ");
+  });
 
   const sessionDisplayLabel = createMemo(() => {
     const session = selectedSession();
@@ -111,16 +267,47 @@ function TuiApp(props: TuiAppProps) {
     }, 1);
   }
 
+  function setSessionEvents(sessionId: string, updater: (events: TuiEvent[]) => TuiEvent[]) {
+    setEventsBySession((current) => {
+      const next = updater(current[sessionId] ?? []);
+      return {
+        ...current,
+        [sessionId]: next,
+      };
+    });
+  }
+
+  function setSessionStreaming(sessionId: string, value: string) {
+    setStreamBySession((current) => ({
+      ...current,
+      [sessionId]: value,
+    }));
+  }
+
+  function setSessionRunState(
+    sessionId: string,
+    next: SessionRunState | ((state: SessionRunState) => SessionRunState),
+  ) {
+    setRunStateBySession((current) => {
+      const prev = asRunState(current[sessionId]);
+      const value = typeof next === "function" ? next(prev) : next;
+      return {
+        ...current,
+        [sessionId]: value,
+      };
+    });
+  }
+
   async function refreshEvents(sessionId: string) {
+    const token = ++refreshSeq;
+    refreshTokens.set(sessionId, token);
     const loaded = await props.runtime.listEvents(sessionId);
-    setStreamingText("");
-    setEvents(sortEvents(loaded));
+    if (refreshTokens.get(sessionId) !== token) return;
+    setSessionEvents(sessionId, (existing) => mergeEvents(existing, loaded));
   }
 
   function selectSession(sessionId: string) {
     setSelectedSessionId(sessionId);
-    setStreamingText("");
-    setEvents([]);
     refreshEvents(sessionId).catch((refreshError) => {
       const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
       setError(message);
@@ -143,9 +330,14 @@ function TuiApp(props: TuiAppProps) {
   }
 
   async function refreshStatus() {
-    const nextStatus = await props.runtime.getStatus();
-    setStatus(nextStatus);
-    if (!modelId()) setModelId(nextStatus.modelId);
+    try {
+      const nextStatus = await props.runtime.getStatus();
+      setStatus(nextStatus);
+      if (!modelId()) setModelId(nextStatus.modelId);
+    } catch (error) {
+      setStatus((current) => (current ? { ...current, daemonHealthy: false } : current));
+      throw error;
+    }
   }
 
   async function refreshLogs() {
@@ -154,6 +346,8 @@ function TuiApp(props: TuiAppProps) {
 
   async function createSession() {
     const sessionId = await props.runtime.createSession();
+    setSessionRunState(sessionId, { phase: "idle" });
+    setSessionStreaming(sessionId, "");
     await refreshSessions();
     selectSession(sessionId);
   }
@@ -171,24 +365,88 @@ function TuiApp(props: TuiAppProps) {
   }
 
   function appendEvent(event: TuiEvent) {
-    if (event.sessionId !== selectedSessionId()) return;
+    setSessionEvents(event.sessionId, (current) => mergeEvents(current, [event]));
 
-    if (event.kind === "assistant_delta") {
-      const text = payloadText(event);
-      if (text) setStreamingText((current) => current + text);
+    if (event.kind === "run_started") {
+      setSessionRunState(event.sessionId, {
+        phase: "running",
+        startedAt: Date.now(),
+      });
+      setSessionStreaming(event.sessionId, "");
       return;
     }
 
-    if (
-      event.kind === "assistant" ||
-      event.kind === "run_finished" ||
-      event.kind === "run_failed" ||
-      event.kind === "done"
-    ) {
-      setStreamingText("");
+    if (event.kind === "assistant_delta") {
+      const text = payloadText(event);
+      if (text) {
+        setSessionRunState(event.sessionId, (current) => ({
+          phase: "running",
+          startedAt: current.startedAt ?? Date.now(),
+          message: current.message,
+        }));
+        setStreamBySession((current) => ({
+          ...current,
+          [event.sessionId]: `${current[event.sessionId] ?? ""}${text}`,
+        }));
+      }
+      return;
     }
 
-    setEvents((current) => mergeEvents(current, [event]));
+    if (event.kind === "tool_call") {
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as Record<string, unknown>)
+          : {};
+      const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+      setSessionRunState(event.sessionId, (current) => ({
+        phase: "tool",
+        startedAt: current.startedAt ?? Date.now(),
+        message: tool,
+      }));
+      return;
+    }
+
+    if (event.kind === "tool_result") {
+      setSessionRunState(event.sessionId, (current) => ({
+        phase: "running",
+        startedAt: current.startedAt ?? Date.now(),
+        message: current.message,
+      }));
+      return;
+    }
+
+    if (event.kind === "assistant") {
+      setSessionStreaming(event.sessionId, "");
+      return;
+    }
+
+    if (event.kind === "run_finished" || event.kind === "done") {
+      cancelledByUser.delete(event.sessionId);
+      setSessionStreaming(event.sessionId, "");
+      setSessionRunState(event.sessionId, { phase: "idle" });
+      return;
+    }
+
+    if (event.kind === "run_failed" || event.kind === "model_timeout" || event.kind === "error") {
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as { message?: string })
+          : {};
+      const message = typeof payload.message === "string" ? payload.message : event.kind;
+      setSessionStreaming(event.sessionId, "");
+      if (isCancelMessage(message) || cancelledByUser.has(event.sessionId)) {
+        setSessionRunState(event.sessionId, {
+          phase: "cancelled",
+          message,
+        });
+      } else {
+        setSessionRunState(event.sessionId, {
+          phase: "failed",
+          message,
+        });
+      }
+      return;
+    }
   }
 
   function requestPermission(request: PermissionRequest): Promise<PermissionResolution> {
@@ -202,6 +460,18 @@ function TuiApp(props: TuiAppProps) {
     pendingResolver?.(resolution);
     pendingResolver = null;
     setPendingPermission(null);
+  }
+
+  async function cancelActiveRun() {
+    const sessionId = selectedSessionId();
+    if (!sessionId) return;
+    cancelledByUser.add(sessionId);
+    setSessionRunState(sessionId, (current) => ({
+      phase: "running",
+      startedAt: current.startedAt ?? Date.now(),
+      message: "cancelling",
+    }));
+    await props.runtime.cancelRun(sessionId);
   }
 
   async function executeCommand(command: string, arg: string): Promise<boolean> {
@@ -238,6 +508,11 @@ function TuiApp(props: TuiAppProps) {
       return true;
     }
 
+    if (command === "stop") {
+      await cancelActiveRun();
+      return true;
+    }
+
     if (command === "model") {
       if (!arg) {
         setError("usage: /model <model-id>");
@@ -269,6 +544,7 @@ function TuiApp(props: TuiAppProps) {
     { id: "events", title: `${showSystemStream() ? "hide" : "show"} system stream`, keybind: "ctrl+e", category: "view" },
     { id: "status", title: `${showStatus() ? "hide" : "show"} status panel`, keybind: "ctrl+s", category: "view" },
     { id: "logs", title: "refresh logs", hint: "open runtime logs", keybind: "ctrl+l", category: "runtime" },
+    { id: "stop", title: "stop current run", hint: "cancel active generation", keybind: "ctrl+x", category: "runtime" },
     { id: "quit", title: "quit", keybind: "ctrl+q", category: "app" },
   ]);
 
@@ -314,8 +590,11 @@ function TuiApp(props: TuiAppProps) {
     if (!sessionId) return;
 
     void maybeAutoRenameSession(sessionId, value);
-    setRunning(true);
-    setStreamingText("");
+    setSessionRunState(sessionId, {
+      phase: "running",
+      startedAt: Date.now(),
+    });
+    setSessionStreaming(sessionId, "");
 
     try {
       await props.runtime.runPrompt({
@@ -328,9 +607,24 @@ function TuiApp(props: TuiAppProps) {
       });
     } catch (runError) {
       const message = runError instanceof Error ? runError.message : String(runError);
-      setError(message);
+      if (isCancelMessage(message) || cancelledByUser.has(sessionId)) {
+        setSessionRunState(sessionId, {
+          phase: "cancelled",
+          message,
+        });
+      } else {
+        setSessionRunState(sessionId, {
+          phase: "failed",
+          message,
+        });
+        setError(message);
+      }
     } finally {
-      setRunning(false);
+      cancelledByUser.delete(sessionId);
+      setSessionRunState(sessionId, (current) => {
+        if (current.phase === "running" || current.phase === "tool") return { phase: "idle" };
+        return current;
+      });
       await refreshSessions();
       await refreshStatus();
       await refreshLogs();
@@ -397,6 +691,15 @@ function TuiApp(props: TuiAppProps) {
       return;
     }
 
+    if (withCtrl && evt.name === "x") {
+      evt.preventDefault();
+      cancelActiveRun().catch((cancelError) => {
+        const message = cancelError instanceof Error ? cancelError.message : String(cancelError);
+        setError(message);
+      });
+      return;
+    }
+
     if (withCtrl && evt.name === "up") {
       evt.preventDefault();
       cycleSession(-1);
@@ -413,33 +716,46 @@ function TuiApp(props: TuiAppProps) {
     await refreshSessions();
     await refreshStatus();
     await refreshLogs();
+
     statusTimer = setInterval(() => {
       refreshStatus().catch(() => undefined);
     }, 5000);
+
+    clockTimer = setInterval(() => {
+      setClockTick(Date.now());
+    }, 1000);
+
     focusInputSoon();
   });
 
   onCleanup(() => {
     if (statusTimer) clearInterval(statusTimer);
+    if (clockTimer) clearInterval(clockTimer);
     props.runtime.close().catch(() => undefined);
   });
 
   return (
     <box flexDirection="column" height="100%" backgroundColor="#020617">
-      <box
-        flexDirection="row"
-        border
-        borderColor="#334155"
-        backgroundColor="#0b1220"
-        paddingLeft={1}
-        paddingRight={1}
-      >
-        <text fg="#86efac" attributes={1}>blah code</text>
-        <text fg="#64748b"> · opencode mode</text>
-        <box flexGrow={1} />
-        <text fg="#94a3b8">model: {modelId() || "default"}</text>
-        <text fg="#64748b"> · </text>
-        <text fg="#bfdbfe">session: {sessionDisplayLabel()}</text>
+      <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220">
+        <box flexDirection="row" paddingLeft={1} paddingRight={1}>
+          <text fg="#86efac" attributes={1}>blah code</text>
+          <text fg="#64748b"> · interactive</text>
+          <box flexGrow={1} />
+          <text fg="#94a3b8">model: {modelId() || "default"}</text>
+          <text fg="#64748b"> · </text>
+          <text fg="#bfdbfe">session: {sessionDisplayLabel()}</text>
+        </box>
+        <box flexDirection="row" paddingLeft={1} paddingRight={1}>
+          <text fg="#94a3b8">runtime: {runtimeModeText()}</text>
+          <text fg="#64748b"> · </text>
+          <text fg={daemonUp() ? "#86efac" : "#fca5a5"}>daemon: {daemonText()}</text>
+          <text fg="#64748b"> · </text>
+          <text fg={runStatusColor()}>state: {selectedRunState().phase}</text>
+          <text fg="#64748b"> · </text>
+          <text fg="#94a3b8">elapsed: {elapsedRunAge()}</text>
+          <text fg="#64748b"> · </text>
+          <text fg="#94a3b8">last event: {lastEventAge()}</text>
+        </box>
       </box>
 
       <box flexGrow={1} flexDirection="row" gap={1}>
@@ -456,12 +772,16 @@ function TuiApp(props: TuiAppProps) {
           <box flexDirection="row">
             <text fg="#e2e8f0" attributes={1}>conversation</text>
             <box flexGrow={1} />
-            <text fg={running() ? "#fbbf24" : "#64748b"}>{running() ? "responding" : "idle"}</text>
+            <text fg={runStatusColor()}>{runStatusText()}</text>
+          </box>
+          <box border borderColor="#1e293b" backgroundColor="#020617" paddingLeft={1} paddingRight={1}>
+            <text fg="#94a3b8">activity: {latestActivity()}</text>
           </box>
           <EventTimeline
-            events={events()}
-            streamingText={streamingText()}
+            events={selectedEvents()}
+            streamingText={selectedStreamingText()}
             showSystemStream={showSystemStream()}
+            runState={selectedRunState()}
           />
         </box>
 
@@ -496,7 +816,7 @@ function TuiApp(props: TuiAppProps) {
             }}
             flexGrow={1}
             initialValue=""
-            placeholder="Ask anything…"
+            placeholder="Ask anything..."
             wrapMode="word"
             keyBindings={[
               { name: "return", action: "submit" },
@@ -511,12 +831,18 @@ function TuiApp(props: TuiAppProps) {
             }}
           />
           <Show when={running()}>
-            <text fg="#fbbf24"> thinking…</text>
+            <text fg="#fbbf24"> thinking...</text>
           </Show>
         </box>
         <text fg="#64748b">
-          enter send · shift+enter newline · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+e system · ctrl+s status · ctrl+q quit
+          enter send · shift+enter newline · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+x stop · ctrl+e system · ctrl+s status · ctrl+q quit
         </text>
+        <Show when={waitingHint()}>
+          <text fg="#fbbf24">{waitingHint()!}</text>
+        </Show>
+        <Show when={reconnectHint()}>
+          <text fg="#f59e0b">{reconnectHint()!}</text>
+        </Show>
         <Show when={error()}>
           <text fg="#fca5a5">{error()}</text>
         </Show>

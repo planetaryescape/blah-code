@@ -8,6 +8,10 @@ interface SessionListProps {
   onSelect: (id: string) => void;
 }
 
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 export function SessionList(props: SessionListProps) {
   const selectedIndex = createMemo(() =>
     props.sessions.findIndex((session) => session.id === props.selectedSessionId),
@@ -61,6 +65,9 @@ export function SessionList(props: SessionListProps) {
         {(session, idx) => {
           const actualIndex = () => startIndex() + idx();
           const selected = () => actualIndex() === selectedIndex();
+          const title = () => truncate(displayName(session), 23);
+          const idLine = () => truncate(shortId(session.id), 23);
+          const timeLine = () => truncate(formatSessionTime(session.lastEventAt ?? session.createdAt), 23);
           return (
             // biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box is the interactive primitive in TUI.
             <box
@@ -72,15 +79,15 @@ export function SessionList(props: SessionListProps) {
                 props.onSelect(session.id);
               }}
             >
-              <box flexDirection="row">
-                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{displayName(session)}</text>
+              <box flexDirection="row" width="100%">
+                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{title()}</text>
                 <box flexGrow={1} />
                 <text fg={selected() ? "#bfdbfe" : "#94a3b8"}>{session.eventCount}</text>
               </box>
               <Show when={session.name}>
-                <text fg={selected() ? "#93c5fd" : "#64748b"}>{shortId(session.id)}</text>
+                <text fg={selected() ? "#93c5fd" : "#64748b"}>{idLine()}</text>
               </Show>
-              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>{formatSessionTime(session.lastEventAt ?? session.createdAt)}</text>
+              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>{timeLine()}</text>
             </box>
           );
         }}

@@ -8,6 +8,13 @@ TUI (default):
 bun run dev
 ```
 
+Daemon-first runtime:
+
+- plain TUI attaches daemon by default
+- attach precedence: `--attach` -> `BLAH_DAEMON_URL` -> `daemon.attachUrl` -> local host/port
+- local target down => CLI auto-starts daemon
+- remote target down => startup fails fast with attach diagnostics
+
 One-shot run:
 
 ```bash
@@ -42,6 +49,14 @@ Look for event order:
 5. `assistant` (+ optional `assistant_delta`)
 6. `run_finished` + `done`
 
+In TUI, verify liveness from always-visible header/activity:
+
+- runtime mode (`daemon|local`)
+- daemon health (`up|down`)
+- run state (`idle|thinking|tool|failed|cancelled`)
+- elapsed + last event age
+- latest lifecycle/tool activity row
+
 ## common failures
 
 1. `BLAH_API_KEY missing`
@@ -63,6 +78,11 @@ Look for event order:
 - run `blah-code status`
 - if down, run `blah-code serve`
 - verify with `GET /v1/status`
+
+5. remote daemon attach failing
+- run `blah-code status --attach <url>`
+- run `blah-code logs --attach <url>`
+- verify daemon host allows your client and port is reachable
 
 ## lifecycle
 

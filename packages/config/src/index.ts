@@ -30,6 +30,7 @@ const configSchema = z.object({
     .object({
       port: z.number().int().min(1).max(65535),
       host: z.string().min(1),
+      attachUrl: z.string().url().optional(),
     })
     .optional(),
 });

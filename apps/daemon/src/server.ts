@@ -62,6 +62,7 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
   const pendingApprovals = new Map<string, Map<string, PendingApproval>>();
   const listeners = new Map<string, Set<(event: SessionEvent) => void>>();
   const activeSessions = new Set<string>();
+  const runControllers = new Map<string, AbortController>();
   const startedAt = Date.now();
 
   const host = options?.host ?? config.daemon?.host ?? "127.0.0.1";
@@ -209,6 +210,15 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
     return reply.send(store.listEvents(req.params.id));
   });
 
+  app.post<{ Params: { id: string } }>("/v1/sessions/:id/cancel", async (req, reply) => {
+    const ctrl = runControllers.get(req.params.id);
+    if (!ctrl) {
+      return reply.send({ success: false, cancelled: false, active: false });
+    }
+    ctrl.abort("cancelled");
+    return reply.send({ success: true, cancelled: true, active: true });
+  });
+
   app.get<{ Params: { id: string } }>(
     "/v1/sessions/:id/events/stream",
     async (req, reply) => {
@@ -294,6 +304,9 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
       if (!runtime.apiKey) {
         return reply.status(400).send({ error: "BLAH_API_KEY missing" });
       }
+      if (runControllers.has(req.params.id)) {
+        return reply.status(409).send({ error: "Session already running" });
+      }
 
       const transport = new BlahTransport({
         apiKey: runtime.apiKey,
@@ -302,7 +315,9 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
 
       const runner = new AgentRunner(transport);
       const toolRuntime = await toolRuntimePromise;
+      const runCtrl = new AbortController();
       activeSessions.add(req.params.id);
+      runControllers.set(req.params.id, runCtrl);
 
       try {
         emitEvent(req.params.id, "user", { text: req.body.prompt });
@@ -311,6 +326,7 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
           cwd: runtime.cwd,
           modelId: req.body.modelId ?? runtime.modelId,
           timeoutMs: req.body.timeoutMs,
+          signal: runCtrl.signal,
           policy: runtime.permissionPolicy,
           toolRuntime,
           onEvent(event) {
@@ -346,10 +362,14 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
         return reply.send({ output: result.text, policy: result.policy });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (runCtrl.signal.aborted) {
+          return reply.status(499).send({ error: "Run cancelled by user", cancelled: true });
+        }
         logger.error(`prompt run failed sessionId=${req.params.id} error=${message}`);
         return reply.status(500).send({ error: message });
       } finally {
         activeSessions.delete(req.params.id);
+        runControllers.delete(req.params.id);
       }
     },
   );

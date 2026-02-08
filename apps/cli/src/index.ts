@@ -22,6 +22,7 @@ import {
   validateBlahApiKey,
 } from "@blah-code/transport-blah";
 import { Command } from "commander";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { runTui } from "./tui/app";
@@ -114,6 +115,91 @@ function resolveDaemonAddress(cwd: string, host?: string, port?: string | number
     port: resolvedPort,
     url: `http://${resolvedHost}:${resolvedPort}`,
   };
+}
+
+function normalizeDaemonUrl(url: string): string {
+  return url.replace(/\/$/, "");
+}
+
+function resolveDaemonAttachUrl(cwd: string, explicitAttach?: string): string {
+  if (explicitAttach) return normalizeDaemonUrl(explicitAttach);
+  if (process.env.BLAH_DAEMON_URL) return normalizeDaemonUrl(process.env.BLAH_DAEMON_URL);
+
+  const config = loadBlahCodeConfig(cwd);
+  if (config.daemon?.attachUrl) return normalizeDaemonUrl(config.daemon.attachUrl);
+
+  return resolveDaemonAddress(cwd).url;
+}
+
+function isLocalDaemonUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "::1" ||
+      parsed.hostname === "0.0.0.0"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function daemonStatus(url: string, timeoutMs = 1200): Promise<{ ok: boolean; error?: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${normalizeDaemonUrl(url)}/v1/status`, { signal: ctrl.signal });
+    if (!res.ok) return { ok: false, error: `status ${res.status}` };
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function startDaemonDetached(cwd: string, daemonUrl: string): void {
+  const parsed = new URL(daemonUrl);
+  const host = parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 3789;
+  const entry = process.argv[1];
+  const serveArgs = ["serve", "--cwd", cwd, "--host", host, "--port", String(port)];
+  const command = entry && (entry.endsWith(".ts") || entry.endsWith(".js")) ? process.execPath : "blah-code";
+  const args = command === process.execPath ? [entry!, ...serveArgs] : serveArgs;
+
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.unref();
+}
+
+async function ensureDaemonForTui(cwd: string, daemonUrl: string): Promise<{ url: string; autoStarted: boolean }> {
+  const first = await daemonStatus(daemonUrl);
+  if (first.ok) return { url: daemonUrl, autoStarted: false };
+
+  if (!isLocalDaemonUrl(daemonUrl)) {
+    throw new Error(first.error ?? "remote daemon unreachable");
+  }
+
+  startDaemonDetached(cwd, daemonUrl);
+
+  for (let i = 0; i < 16; i += 1) {
+    await sleep(250);
+    const probe = await daemonStatus(daemonUrl, 1000);
+    if (probe.ok) return { url: daemonUrl, autoStarted: true };
+  }
+
+  throw new Error("local daemon did not become ready after auto-start");
 }
 
 program
@@ -221,7 +307,9 @@ program
 
     const daemon = opts.attach
       ? { url: opts.attach }
-      : resolveDaemonAddress(cwd, opts.host, opts.port);
+      : opts.host || opts.port
+        ? resolveDaemonAddress(cwd, opts.host, opts.port)
+        : { url: resolveDaemonAttachUrl(cwd) };
 
     const localApiKey =
       process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey();
@@ -477,9 +565,30 @@ program.action(async () => {
   const cwd = opts.cwd ?? process.cwd();
   applyLogging(cwd);
 
+  const daemonUrl = resolveDaemonAttachUrl(cwd, opts.attach);
+  let resolvedAttachUrl = daemonUrl;
+  try {
+    const ensured = await ensureDaemonForTui(cwd, daemonUrl);
+    resolvedAttachUrl = ensured.url;
+    if (ensured.autoStarted) {
+      console.log(`daemon auto-started: ${resolvedAttachUrl}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`failed to connect daemon: ${message}`);
+    console.error(`daemon url: ${daemonUrl}`);
+    console.error(`check: blah-code status --attach ${daemonUrl}`);
+    console.error(`logs: blah-code logs --attach ${daemonUrl}`);
+    if (isLocalDaemonUrl(daemonUrl)) {
+      console.error(`manual start: blah-code serve --cwd ${cwd}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
   await runTui({
     cwd,
-    attachUrl: opts.attach,
+    attachUrl: resolvedAttachUrl,
     modelId: opts.model,
     timeoutMs: opts.timeoutMs ? Number(opts.timeoutMs) : undefined,
   });
