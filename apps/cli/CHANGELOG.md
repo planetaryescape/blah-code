@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.3.0...cli-v0.4.0) (2026-02-08)
+
+
+### Features
+
+* overhaul TUI to match opencode feel ([26ed2e3](https://github.com/planetaryescape/blah-code/commit/26ed2e3fb0301971dd791a7beb7d1ff54b01a916))
+
+
+### Bug Fixes
+
+* make TUI composer usable by default ([bf009e2](https://github.com/planetaryescape/blah-code/commit/bf009e27ec3946188d2528ecae0fe81c63dd70d4))
+* polish TUI prompt dock and timeline readability ([3cb309c](https://github.com/planetaryescape/blah-code/commit/3cb309c45e4f484184d713f7fcef157f5ca516e4))
+* stabilize logger tests and npm release otp handling ([3929294](https://github.com/planetaryescape/blah-code/commit/3929294f36f7567cdb51f42378019496a412e224))
+* support npm otp in cli publish script ([8b4e612](https://github.com/planetaryescape/blah-code/commit/8b4e612b4e1b3e589541fc4cac4e9fdc3114259f))
+
 ## [0.3.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.2.0...cli-v0.3.0) (2026-02-08)
 
 
