@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/planetaryescape/blah-code/compare/cli-v0.6.0...cli-v0.6.1) (2026-02-08)
+
+
+### Bug Fixes
+
+* keep tui startup seamless without manual daemon steps ([3a1c124](https://github.com/planetaryescape/blah-code/commit/3a1c12424ebbbb72e964f68b9f030d24eb74be8d))
+* keep tui startup seamless without manual daemon steps ([5b56c53](https://github.com/planetaryescape/blah-code/commit/5b56c53a20fa9cd77d4f8121b714ec0d595681c2))
+
 ## [0.6.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.5.0...cli-v0.6.0) (2026-02-08)
 
 
