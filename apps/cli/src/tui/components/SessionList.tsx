@@ -1,6 +1,7 @@
 import { createMemo, For, Show } from "solid-js";
 import type { SessionSummary } from "@blah-code/session";
 import { formatSessionTime } from "../state";
+import { theme } from "../theme";
 
 interface SessionListProps {
   sessions: SessionSummary[];
@@ -38,24 +39,32 @@ export function SessionList(props: SessionListProps) {
   };
 
   return (
-    <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220" padding={1} width={36}>
+    <box
+      flexDirection="column"
+      border
+      borderStyle={theme.border.panelStyle}
+      borderColor={theme.colors.border}
+      backgroundColor={theme.colors.panel}
+      padding={1}
+      width={theme.layout.sidebarWidth}
+    >
       <box flexDirection="row">
-        <text fg="#e2e8f0" attributes={1}>sessions</text>
+        <text fg={theme.colors.text} attributes={1}>Sessions</text>
         <box flexGrow={1} />
-        <text fg="#94a3b8">
+        <text fg={theme.colors.muted}>
           {props.sessions.length > 0 ? `${Math.max(selectedIndex(), 0) + 1}/${props.sessions.length}` : "0/0"}
         </text>
       </box>
 
       <Show when={props.sessions.length === 0}>
         <box marginTop={1}>
-          <text fg="#94a3b8">no sessions yet</text>
+          <text fg={theme.colors.muted}>no sessions yet</text>
         </box>
       </Show>
 
       <Show when={props.sessions.length > 0}>
         <box justifyContent="center">
-          <text fg="#64748b">
+          <text fg={theme.colors.faint}>
             {startIndex() > 0 ? `↑ ${startIndex()} more` : " "}
           </text>
         </box>
@@ -72,7 +81,11 @@ export function SessionList(props: SessionListProps) {
             // biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box is the interactive primitive in TUI.
             <box
               flexDirection="column"
-              backgroundColor={selected() ? "#172554" : undefined}
+              backgroundColor={selected() ? theme.colors.accentSoft : undefined}
+              border={selected() ? ["left"] : undefined}
+              borderColor={selected() ? theme.colors.accent : undefined}
+              paddingLeft={selected() ? 1 : 0}
+              paddingTop={1}
               paddingBottom={1}
               onMouseUp={(event) => {
                 if (event.button !== 0) return;
@@ -80,14 +93,16 @@ export function SessionList(props: SessionListProps) {
               }}
             >
               <box flexDirection="row" width="100%">
-                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{title()}</text>
+                <text fg={selected() ? theme.colors.text : theme.colors.text} attributes={selected() ? 1 : 0}>
+                  {title()}
+                </text>
                 <box flexGrow={1} />
-                <text fg={selected() ? "#bfdbfe" : "#94a3b8"}>{session.eventCount}</text>
+                <text fg={selected() ? theme.colors.muted : theme.colors.faint}>{session.eventCount}</text>
               </box>
               <Show when={session.name}>
-                <text fg={selected() ? "#93c5fd" : "#64748b"}>{idLine()}</text>
+                <text fg={selected() ? theme.colors.muted : theme.colors.faint}>{idLine()}</text>
               </Show>
-              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>{timeLine()}</text>
+              <text fg={selected() ? theme.colors.muted : theme.colors.muted}>{timeLine()}</text>
             </box>
           );
         }}
@@ -95,14 +110,14 @@ export function SessionList(props: SessionListProps) {
 
       <Show when={props.sessions.length > 0}>
         <box justifyContent="center">
-          <text fg="#64748b">
+          <text fg={theme.colors.faint}>
             {endIndex() < props.sessions.length ? `↓ ${props.sessions.length - endIndex()} more` : " "}
           </text>
         </box>
       </Show>
 
       <box marginTop={1}>
-        <text fg="#64748b">click or ctrl+p/ctrl+shift+n</text>
+        <text fg={theme.colors.faint}>ctrl+b hide · ctrl+k jump</text>
       </box>
     </box>
   );

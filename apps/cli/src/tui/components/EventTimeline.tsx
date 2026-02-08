@@ -1,5 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 import type { TuiEvent } from "../state";
+import { theme } from "../theme";
 
 interface SessionRunState {
   phase: "idle" | "running" | "tool" | "failed" | "cancelled";
@@ -11,6 +12,7 @@ interface EventTimelineProps {
   events: TuiEvent[];
   streamingText?: string;
   showSystemStream?: boolean;
+  showToolsExpanded?: boolean;
   runState?: SessionRunState;
 }
 
@@ -54,21 +56,29 @@ function formatClock(ts: number): string {
   });
 }
 
+function toolName(event: TuiEvent): string {
+  const payload = asRecord(event.payload);
+  return typeof payload.tool === "string" ? payload.tool : "tool";
+}
+
+function toolArgsOrResult(event: TuiEvent): string {
+  const payload = asRecord(event.payload);
+  if (event.kind === "tool_call") {
+    return stringifyPayload(payload.arguments ?? payload.input ?? payload.args ?? {});
+  }
+  if (event.kind === "tool_result") {
+    return stringifyPayload(payload.result ?? payload.output ?? {});
+  }
+  return stringifyPayload(payload);
+}
+
 function textForEvent(event: TuiEvent): string {
   const payload = asRecord(event.payload);
   const directText = typeof payload.text === "string" ? payload.text : "";
   if (directText.trim()) return directText;
 
-  if (event.kind === "tool_call") {
-    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
-    const args = stringifyPayload(payload.arguments ?? payload.input ?? payload.args ?? {});
-    return compact(`${tool} ${args}`.trim());
-  }
-
-  if (event.kind === "tool_result") {
-    const tool = typeof payload.tool === "string" ? payload.tool : "tool";
-    const result = stringifyPayload(payload.result ?? payload.output ?? {});
-    return compact(`${tool} ${result}`.trim());
+  if (event.kind === "tool_call" || event.kind === "tool_result") {
+    return compact(toolArgsOrResult(event));
   }
 
   if (event.kind === "run_failed" || event.kind === "error" || event.kind === "model_timeout") {
@@ -107,6 +117,7 @@ function systemLabel(event: TuiEvent): string {
 export function EventTimeline(props: EventTimelineProps) {
   const timelineRows = createMemo<TimelineRow[]>(() => {
     const rows: TimelineRow[] = [];
+    const toolsExpanded = Boolean(props.showToolsExpanded);
 
     for (const event of props.events) {
       if (event.kind === "assistant_delta") continue;
@@ -125,12 +136,17 @@ export function EventTimeline(props: EventTimelineProps) {
       }
 
       if (event.kind === "tool_call" || event.kind === "tool_result") {
-        const text = textForEvent(event) || event.kind;
+        const name = toolName(event);
+        const label = event.kind === "tool_call" ? `tool call: ${name}` : `tool result: ${name}`;
+        const body = toolsExpanded
+          ? compact(`${event.kind === "tool_call" ? "args" : "out"}: ${toolArgsOrResult(event)}`, 220)
+          : compact(toolArgsOrResult(event), 80);
+
         rows.push({
           id: event.id,
           variant: "tool",
-          text,
-          label: systemLabel(event),
+          text: body,
+          label,
           createdAt: event.createdAt,
         });
         continue;
@@ -194,17 +210,17 @@ export function EventTimeline(props: EventTimelineProps) {
         stickyScroll
         stickyStart="bottom"
         border
-        borderColor="#1e293b"
-        backgroundColor="#020617"
+        borderColor={theme.colors.border}
+        backgroundColor={theme.colors.bg}
         padding={1}
       >
         <Show when={!hasConversation() && (!props.streamingText || props.streamingText.trim().length === 0)}>
           <box flexDirection="column" marginBottom={1}>
-            <text fg="#f8fafc" attributes={1}>
+            <text fg={theme.colors.text} attributes={1}>
               Start a conversation
             </text>
-            <text fg="#94a3b8">Enter sends. Shift+Enter newline. Ctrl+K opens command palette.</text>
-            <text fg="#64748b">Try: tell me what this repo does</text>
+            <text fg={theme.colors.muted}>Enter sends · Shift+Enter newline · Ctrl+K palette</text>
+            <text fg={theme.colors.faint}>Try: tell me what this repo does</text>
           </box>
         </Show>
 
@@ -214,69 +230,60 @@ export function EventTimeline(props: EventTimelineProps) {
             const isAssistant = row.variant === "assistant";
             const isTool = row.variant === "tool";
             const isActivity = row.variant === "activity";
+            const isError = row.variant === "error";
             const lines = () => row.text.split("\n");
+
+            if (isActivity) {
+              return (
+                <box justifyContent="center" marginBottom={1}>
+                  <text fg={theme.colors.faint}>
+                    {row.label} · {formatClock(row.createdAt)}
+                  </text>
+                </box>
+              );
+            }
+
             return (
               <box alignItems={isUser ? "flex-end" : "flex-start"} marginBottom={1}>
                 <box
-                  width={isUser ? "78%" : "90%"}
+                  width={isUser || isAssistant ? "72%" : "90%"}
                   flexDirection="column"
-                  border
+                  borderStyle="single"
+                  border={["left"]}
                   borderColor={
                     isUser
-                      ? "#3b82f6"
+                      ? theme.colors.userBorder
                       : isAssistant
-                        ? "#334155"
+                        ? theme.colors.assistantBorder
                         : isTool
-                          ? "#0284c7"
-                          : isActivity
-                            ? "#475569"
-                            : "#dc2626"
+                          ? theme.colors.toolBorder
+                          : isError
+                            ? theme.colors.danger
+                            : theme.colors.border
                   }
                   backgroundColor={
                     isUser
-                      ? "#0f2146"
+                      ? theme.colors.userBg
                       : isAssistant
-                        ? "#111827"
+                        ? theme.colors.assistantBg
                         : isTool
-                          ? "#0a1f2f"
-                          : isActivity
-                            ? "#111827"
-                            : "#2a0f14"
+                          ? theme.colors.toolBg
+                          : isError
+                            ? "#20070b"
+                            : theme.colors.panelAlt
                   }
                   paddingLeft={1}
                   paddingRight={1}
                 >
                   <text
-                    fg={
-                      isUser
-                        ? "#bfdbfe"
-                        : isAssistant
-                          ? "#e2e8f0"
-                          : isTool
-                            ? "#7dd3fc"
-                            : isActivity
-                              ? "#94a3b8"
-                              : "#fca5a5"
-                    }
+                    fg={isError ? theme.colors.danger : theme.colors.muted}
                     attributes={1}
                   >
-                    {row.label} · {formatClock(row.createdAt)}
+                    {row.label} {formatClock(row.createdAt)}
                   </text>
                   <For each={lines()}>
                     {(line) => (
-                      <text
-                        fg={
-                          isUser
-                            ? "#dbeafe"
-                            : isAssistant
-                              ? "#f8fafc"
-                              : isTool
-                                ? "#bae6fd"
-                                : isActivity
-                                  ? "#cbd5e1"
-                                  : "#fecaca"
-                        }
-                      >
+                      <text fg={isError ? "#fecaca" : theme.colors.text}>
                         {line || " "}
                       </text>
                     )}
@@ -290,27 +297,38 @@ export function EventTimeline(props: EventTimelineProps) {
         <Show when={props.streamingText && props.streamingText.trim().length > 0}>
           <box alignItems="flex-start" marginBottom={1}>
             <box
-              width="90%"
+              width="72%"
               flexDirection="column"
-              border
-              borderColor="#f59e0b"
-              backgroundColor="#1a2438"
+              borderStyle="single"
+              border={["left"]}
+              borderColor={theme.colors.warning}
+              backgroundColor={theme.colors.panelAlt}
               paddingLeft={1}
               paddingRight={1}
             >
-              <text fg="#fbbf24" attributes={1}>
-                assistant · streaming
+              <text fg={theme.colors.muted} attributes={1}>
+                assistant streaming
               </text>
-              <text fg="#f8fafc">{props.streamingText}</text>
+              <text fg={theme.colors.text}>{props.streamingText}</text>
             </box>
           </box>
         </Show>
 
         <Show when={props.runState?.phase === "cancelled" && timelineRows().length === 0}>
           <box alignItems="flex-start" marginBottom={1}>
-            <box width="90%" border borderColor="#f59e0b" backgroundColor="#1f2937" paddingLeft={1} paddingRight={1}>
-              <text fg="#fbbf24" attributes={1}>run cancelled</text>
-              <text fg="#fde68a">{props.runState?.message ?? "cancelled by user"}</text>
+            <box
+              width="90%"
+              borderStyle="single"
+              border={["left"]}
+              borderColor={theme.colors.warning}
+              backgroundColor={theme.colors.panelAlt}
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              <text fg={theme.colors.warning} attributes={1}>
+                run cancelled
+              </text>
+              <text fg={theme.colors.text}>{props.runState?.message ?? "cancelled by user"}</text>
             </box>
           </box>
         </Show>
@@ -320,25 +338,26 @@ export function EventTimeline(props: EventTimelineProps) {
         <box
           flexDirection="column"
           border
-          borderColor="#1e293b"
-          backgroundColor="#020617"
+          borderStyle={theme.border.panelStyle}
+          borderColor={theme.colors.border}
+          backgroundColor={theme.colors.panelAlt}
           marginTop={1}
           paddingLeft={1}
           paddingRight={1}
           minHeight={4}
           maxHeight={8}
         >
-          <text fg="#94a3b8" attributes={1}>
-            system stream
+          <text fg={theme.colors.muted} attributes={1}>
+            system
           </text>
           <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
             <For each={systemRows()}>
               {(row) => (
                 <box flexDirection="row">
-                  <text fg="#475569">{formatClock(row.createdAt)} </text>
-                  <text fg={row.kind === "error" ? "#fca5a5" : "#93c5fd"}>{row.kind}</text>
+                  <text fg={theme.colors.faint}>{formatClock(row.createdAt)} </text>
+                  <text fg={row.kind === "error" ? theme.colors.danger : theme.colors.accent}>{row.kind}</text>
                   <Show when={row.text}>
-                    <text fg="#94a3b8">{` · ${row.text}`}</text>
+                    <text fg={theme.colors.muted}>{` · ${row.text}`}</text>
                   </Show>
                 </box>
               )}

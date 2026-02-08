@@ -1,5 +1,6 @@
 import { useKeyboard } from "@opentui/solid";
 import type { PermissionRequest, PermissionResolution } from "@blah-code/core";
+import { theme } from "../theme";
 
 interface PermissionModalProps {
   request: PermissionRequest;
@@ -38,9 +39,9 @@ export function PermissionModal(props: PermissionModalProps) {
       position="absolute"
       zIndex={20}
       border
-      borderStyle="double"
-      borderColor="#f59e0b"
-      backgroundColor="#0b1220"
+      borderStyle={theme.border.modalStyle}
+      borderColor={theme.colors.border}
+      backgroundColor={theme.colors.panel}
       width="70%"
       height={11}
       left="15%"
@@ -48,16 +49,16 @@ export function PermissionModal(props: PermissionModalProps) {
       flexDirection="column"
       padding={1}
     >
-      <text fg="#fbbf24" attributes={1}>permission required</text>
-      <text fg="#e2e8f0">tool: {props.request.tool}</text>
-      <text fg="#e2e8f0">operation: {props.request.op}</text>
-      <text fg="#94a3b8">target: {props.request.target || "*"}</text>
-      <box marginTop={1} border borderColor="#334155" paddingLeft={1}>
-        <text fg="#fde68a">1 allow once</text>
-        <text fg="#bbf7d0">2 allow always for this target</text>
-        <text fg="#fecaca">3 deny</text>
+      <text fg={theme.colors.text} attributes={1}>permission required</text>
+      <text fg={theme.colors.muted}>tool: {props.request.tool}</text>
+      <text fg={theme.colors.muted}>op: {props.request.op}</text>
+      <text fg={theme.colors.faint}>target: {props.request.target || "*"}</text>
+      <box marginTop={1} border borderColor={theme.colors.border} paddingLeft={1}>
+        <text fg={theme.colors.accent} attributes={1}>1 allow once</text>
+        <text fg={theme.colors.success} attributes={1}>2 always allow target</text>
+        <text fg={theme.colors.danger} attributes={1}>3 deny</text>
       </box>
-      <text fg="#64748b">Esc = deny</text>
+      <text fg={theme.colors.faint}>Esc = deny</text>
     </box>
   );
 }
