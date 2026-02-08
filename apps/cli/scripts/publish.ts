@@ -58,11 +58,12 @@ const PLATFORMS: Platform[] = [
   },
 ];
 
-function parseArgs(): { version: string; dryRun: boolean; tag: string } {
+function parseArgs(): { version: string; dryRun: boolean; tag: string; otp?: string } {
   const args = process.argv.slice(2);
   let version = "";
   let dryRun = false;
   let tag = "latest";
+  let otp: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--version" && args[i + 1]) {
@@ -73,15 +74,23 @@ function parseArgs(): { version: string; dryRun: boolean; tag: string } {
     } else if (args[i] === "--tag" && args[i + 1]) {
       tag = args[i + 1];
       i++;
+    } else if (args[i] === "--otp" && args[i + 1]) {
+      otp = args[i + 1];
+      i++;
     }
   }
 
   if (!version) {
-    console.error("Usage: bun run scripts/publish.ts --version <version>");
+    console.error("Usage: bun run scripts/publish.ts --version <version> [--tag latest] [--otp <code>]");
     process.exit(1);
   }
 
-  return { version, dryRun, tag };
+  if (!otp) {
+    const envOtp = process.env.NPM_OTP?.trim();
+    if (envOtp) otp = envOtp;
+  }
+
+  return { version, dryRun, tag, otp };
 }
 
 async function downloadBinary(platform: Platform, version: string, destDir: string): Promise<void> {
@@ -192,7 +201,7 @@ function createMainPackage(version: string): string {
   return packageDir;
 }
 
-async function publishPackage(packageDir: string, dryRun: boolean, tag: string): Promise<void> {
+async function publishPackage(packageDir: string, dryRun: boolean, tag: string, otp?: string): Promise<void> {
   if (!Bun.which("npm")) {
     throw new Error("npm not found on PATH.");
   }
@@ -221,7 +230,10 @@ async function publishPackage(packageDir: string, dryRun: boolean, tag: string):
   }
 
   console.log(`  Publishing ${pkgVersionRef}...`);
-  const proc = Bun.spawnSync(["npm", "publish", "--access", "public", "--tag", tag], {
+  const publishArgs = ["npm", "publish", "--access", "public", "--tag", tag];
+  if (otp) publishArgs.push("--otp", otp);
+
+  const proc = Bun.spawnSync(publishArgs, {
     cwd: packageDir,
     stdout: "inherit",
     stderr: "inherit",
@@ -233,7 +245,7 @@ async function publishPackage(packageDir: string, dryRun: boolean, tag: string):
 }
 
 async function main() {
-  const { version, dryRun, tag } = parseArgs();
+  const { version, dryRun, tag, otp } = parseArgs();
 
   if (existsSync(DIST)) {
     rmSync(DIST, { recursive: true });
@@ -257,10 +269,10 @@ async function main() {
   const mainPackageDir = createMainPackage(version);
 
   for (const dir of platformPackageDirs) {
-    await publishPackage(dir, dryRun, tag);
+    await publishPackage(dir, dryRun, tag, otp);
   }
 
-  await publishPackage(mainPackageDir, dryRun, tag);
+  await publishPackage(mainPackageDir, dryRun, tag, otp);
 
   rmSync(downloadDir, { recursive: true });
   console.log("✅ Publish complete");
