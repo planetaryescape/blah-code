@@ -6,6 +6,7 @@ export interface PaletteCommand {
   title: string;
   hint?: string;
   keybind?: string;
+  category?: string;
 }
 
 interface CommandPaletteProps {
@@ -77,36 +78,36 @@ export function CommandPalette(props: CommandPaletteProps) {
       position="absolute"
       zIndex={25}
       border
-      borderColor="#22d3ee"
+      borderColor="#3b82f6"
       borderStyle="double"
-      backgroundColor="#09090b"
+      backgroundColor="#020617"
       width="72%"
-      height={14}
+      height={16}
       left="14%"
-      top="18%"
+      top="14%"
       flexDirection="column"
       padding={1}
     >
       <box flexDirection="row">
-        <text fg="#22d3ee" attributes={1}>
+        <text fg="#bfdbfe" attributes={1}>
           command palette
         </text>
         <box flexGrow={1} />
-        <text fg="#71717a">{filtered().length} cmds</text>
+        <text fg="#64748b">{filtered().length} cmds</text>
       </box>
 
       <box marginTop={1} marginBottom={1}>
-        <text fg="#22d3ee">{"> "}</text>
+        <text fg="#3b82f6">{"> "}</text>
         <input
           ref={(value: unknown) => {
             inputRef = value;
           }}
-          placeholder="type command..."
+          placeholder="search command..."
           onInput={(value: string) => setQuery(value)}
         />
       </box>
 
-      <Show when={visible().length > 0} fallback={<text fg="#71717a">no matches</text>}>
+      <Show when={visible().length > 0} fallback={<text fg="#64748b">no matches</text>}>
         <For each={visible()}>
           {(command, idx) => {
             const actualIndex = () => startIndex() + idx();
@@ -116,15 +117,18 @@ export function CommandPalette(props: CommandPaletteProps) {
                 flexDirection="row"
                 paddingLeft={1}
                 paddingRight={1}
-                backgroundColor={selected() ? "#22d3ee" : undefined}
+                backgroundColor={selected() ? "#1d4ed8" : undefined}
               >
-                <text fg={selected() ? "#0f172a" : "#e4e4e7"}>{command.title}</text>
+                <Show when={command.category}>
+                  <text fg={selected() ? "#dbeafe" : "#64748b"}>{`${command.category} · `}</text>
+                </Show>
+                <text fg={selected() ? "#eff6ff" : "#e2e8f0"}>{command.title}</text>
                 <Show when={command.hint}>
-                  <text fg={selected() ? "#0f172a" : "#a1a1aa"}>{` · ${command.hint}`}</text>
+                  <text fg={selected() ? "#dbeafe" : "#94a3b8"}>{` · ${command.hint}`}</text>
                 </Show>
                 <box flexGrow={1} />
                 <Show when={command.keybind}>
-                  <text fg={selected() ? "#0f172a" : "#71717a"}>{command.keybind}</text>
+                  <text fg={selected() ? "#dbeafe" : "#64748b"}>{command.keybind}</text>
                 </Show>
               </box>
             );
@@ -133,7 +137,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       </Show>
 
       <box marginTop={1}>
-        <text fg="#71717a">↑↓ navigate · enter run · esc close</text>
+        <text fg="#64748b">↑↓ navigate · enter run · esc close · /help from input</text>
       </box>
     </box>
   );

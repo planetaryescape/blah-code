@@ -29,24 +29,24 @@ export function SessionList(props: SessionListProps) {
     id.length > 18 ? `${id.slice(0, 8)}…${id.slice(id.length - 6)}` : id;
 
   return (
-    <box flexDirection="column" border borderColor="#3f3f46" padding={1} width={34}>
+    <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220" padding={1} width={34}>
       <box flexDirection="row">
-        <text attributes={1}>sessions</text>
+        <text fg="#e2e8f0" attributes={1}>sessions</text>
         <box flexGrow={1} />
-        <text fg="#71717a">
+        <text fg="#94a3b8">
           {props.sessions.length > 0 ? `${Math.max(selectedIndex(), 0) + 1}/${props.sessions.length}` : "0/0"}
         </text>
       </box>
 
       <Show when={props.sessions.length === 0}>
         <box marginTop={1}>
-          <text fg="#71717a">no sessions yet</text>
+          <text fg="#94a3b8">no sessions yet</text>
         </box>
       </Show>
 
       <Show when={props.sessions.length > 0}>
         <box justifyContent="center">
-          <text fg="#71717a">
+          <text fg="#64748b">
             {startIndex() > 0 ? `↑ ${startIndex()} more` : " "}
           </text>
         </box>
@@ -60,7 +60,7 @@ export function SessionList(props: SessionListProps) {
             // biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI box is the interactive primitive in TUI.
             <box
               flexDirection="column"
-              backgroundColor={selected() ? "#27272a" : undefined}
+              backgroundColor={selected() ? "#172554" : undefined}
               paddingBottom={1}
               onMouseUp={(event) => {
                 if (event.button !== 0) return;
@@ -68,11 +68,11 @@ export function SessionList(props: SessionListProps) {
               }}
             >
               <box flexDirection="row">
-                <text fg={selected() ? "#93c5fd" : "#e4e4e7"}>{shortId(session.id)}</text>
+                <text fg={selected() ? "#bfdbfe" : "#e2e8f0"}>{shortId(session.id)}</text>
                 <box flexGrow={1} />
-                <text fg={selected() ? "#93c5fd" : "#71717a"}>{session.eventCount}</text>
+                <text fg={selected() ? "#bfdbfe" : "#94a3b8"}>{session.eventCount}</text>
               </box>
-              <text fg="#71717a">
+              <text fg={selected() ? "#93c5fd" : "#94a3b8"}>
                 {formatSessionTime(session.lastEventAt ?? session.createdAt)}
               </text>
             </box>
@@ -82,11 +82,15 @@ export function SessionList(props: SessionListProps) {
 
       <Show when={props.sessions.length > 0}>
         <box justifyContent="center">
-          <text fg="#71717a">
+          <text fg="#64748b">
             {endIndex() < props.sessions.length ? `↓ ${props.sessions.length - endIndex()} more` : " "}
           </text>
         </box>
       </Show>
+
+      <box marginTop={1}>
+        <text fg="#64748b">click or ctrl+p/ctrl+shift+n</text>
+      </box>
     </box>
   );
 }
