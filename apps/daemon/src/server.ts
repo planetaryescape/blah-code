@@ -77,7 +77,7 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
     baseUrl:
       process.env.BLAH_BASE_URL ?? loadBlahCodeAppUrl() ?? loadBlahCliAppUrl() ?? "https://blah.chat",
     apiKey: process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey(),
-    modelId: process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini",
+    modelId: process.env.BLAH_MODEL_ID ?? config.model ?? "zai:glm-4.7",
     cwd,
     permissionPolicy: config.permission ?? {},
   };
@@ -167,6 +167,18 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
       sessions: store.listSessions(limit),
     };
   });
+
+  app.patch<{ Params: { id: string }; Body: { name?: string } }>(
+    "/v1/sessions/:id",
+    async (req, reply) => {
+      const name = req.body?.name?.trim();
+      if (!name) {
+        return reply.status(400).send({ error: "name required" });
+      }
+      store.updateSessionName(req.params.id, name);
+      return reply.send({ success: true, session: store.getSession(req.params.id) });
+    },
+  );
 
   app.post<{ Params: { id: string }; Body: { name?: string; summary?: string } }>(
     "/v1/sessions/:id/checkpoint",
@@ -293,6 +305,7 @@ export function createBlahCodeServer(options?: BlahCodeServerOptions): BlahCodeS
       activeSessions.add(req.params.id);
 
       try {
+        emitEvent(req.params.id, "user", { text: req.body.prompt });
         const result = await runner.run({
           prompt: req.body.prompt,
           cwd: runtime.cwd,

@@ -39,6 +39,8 @@ export interface RuntimeClient {
   createSession(): Promise<string>;
   listSessions(limit?: number): Promise<SessionSummary[]>;
   listEvents(sessionId: string): Promise<TuiEvent[]>;
+  renameSession(sessionId: string, name: string): Promise<void>;
+  suggestSessionName(prompt: string): Promise<string | null>;
   runPrompt(input: PromptInput): Promise<{ output: string }>;
   getStatus(): Promise<RuntimeStatus>;
   getLogs(lines?: number): Promise<string[]>;
@@ -57,7 +59,7 @@ function normalizeBaseUrl(input?: string): string {
 }
 
 function resolveModelId(configModel?: string, modelId?: string): string {
-  return modelId ?? process.env.BLAH_MODEL_ID ?? configModel ?? "openai:gpt-5-mini";
+  return modelId ?? process.env.BLAH_MODEL_ID ?? configModel ?? "zai:glm-4.7";
 }
 
 function resolveApiKey(): string | null {
@@ -113,6 +115,44 @@ class LocalRuntime implements RuntimeClient {
     return this.store.listEvents(sessionId);
   }
 
+  async renameSession(sessionId: string, name: string): Promise<void> {
+    this.store.updateSessionName(sessionId, name);
+  }
+
+  async suggestSessionName(prompt: string): Promise<string | null> {
+    const apiKey = resolveApiKey();
+    if (!apiKey) return null;
+
+    const transport = new BlahTransport({
+      apiKey,
+      baseUrl: this.baseUrl,
+    });
+
+    try {
+      const completion = await transport.complete({
+        modelId: "zai:glm-4.7",
+        timeoutMs: 3000,
+        tools: [],
+        messages: [
+          {
+            role: "system",
+            content:
+              "Generate a session title from the user's first prompt. Return only title text, max 6 words, no quotes, no ending punctuation.",
+          },
+          {
+            role: "user",
+            content: prompt.slice(0, 400),
+          },
+        ],
+      });
+      return completion.text;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`session title generation failed error=${message}`);
+      return null;
+    }
+  }
+
   async runPrompt(input: PromptInput): Promise<{ output: string }> {
     const apiKey = resolveApiKey();
     if (!apiKey) {
@@ -128,6 +168,9 @@ class LocalRuntime implements RuntimeClient {
     this.activeSessions.add(input.sessionId);
 
     try {
+      const userEvent = this.store.appendEvent(input.sessionId, "user", { text: input.prompt });
+      input.onEvent?.(userEvent);
+
       const result = await runner.run({
         prompt: input.prompt,
         modelId: input.modelId ?? this.modelId,
@@ -205,6 +248,18 @@ class RemoteRuntime implements RuntimeClient {
 
   async listEvents(sessionId: string): Promise<TuiEvent[]> {
     return this.request<TuiEvent[]>(`/v1/sessions/${sessionId}/events`);
+  }
+
+  async renameSession(sessionId: string, name: string): Promise<void> {
+    await this.request(`/v1/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async suggestSessionName(_prompt: string): Promise<string | null> {
+    return null;
   }
 
   private async streamEvents(

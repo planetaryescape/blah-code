@@ -14,6 +14,7 @@ export interface SessionEvent {
 
 export interface SessionSummary {
   id: string;
+  name?: string;
   createdAt: number;
   lastEventAt: number | null;
   eventCount: number;
@@ -36,7 +37,8 @@ export class SessionStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        name TEXT
       );
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
@@ -48,6 +50,18 @@ export class SessionStore {
       CREATE INDEX IF NOT EXISTS idx_events_session_created
       ON events(session_id, created_at);
     `);
+
+    this.ensureSessionNameColumn();
+  }
+
+  private ensureSessionNameColumn(): void {
+    const columns = this.db.query("PRAGMA table_info(sessions)").all() as Array<{
+      name: string;
+    }>;
+    const hasName = columns.some((column) => column.name === "name");
+    if (!hasName) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN name TEXT");
+    }
   }
 
   createSession(): string {
@@ -87,9 +101,21 @@ export class SessionStore {
       id: row.id,
       sessionId: row.session_id,
       kind: row.kind,
-      payload: JSON.parse(row.payload),
+      payload: this.parsePayload(row.payload),
       createdAt: row.created_at,
     }));
+  }
+
+  private parsePayload(payload: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(payload) as unknown;
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed as Record<string, unknown>;
+      }
+      return { value: parsed };
+    } catch {
+      return { raw: payload };
+    }
   }
 
   listSessions(limit = 20): SessionSummary[] {
@@ -99,17 +125,19 @@ export class SessionStore {
       .query(
         `SELECT
           s.id AS id,
+          s.name AS name,
           s.created_at AS created_at,
           MAX(e.created_at) AS last_event_at,
           COUNT(e.id) AS event_count
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
-        GROUP BY s.id, s.created_at
+        GROUP BY s.id, s.name, s.created_at
         ORDER BY COALESCE(MAX(e.created_at), s.created_at) DESC
         LIMIT ?`,
       )
       .all(safeLimit) as Array<{
       id: string;
+      name: string | null;
       created_at: number;
       last_event_at: number | null;
       event_count: number;
@@ -117,10 +145,51 @@ export class SessionStore {
 
     return rows.map((row) => ({
       id: row.id,
+      name: row.name ?? undefined,
       createdAt: row.created_at,
       lastEventAt: row.last_event_at,
       eventCount: row.event_count,
     }));
+  }
+
+  getSession(sessionId: string): SessionSummary | null {
+    const row = this.db
+      .query(
+        `SELECT
+          s.id AS id,
+          s.name AS name,
+          s.created_at AS created_at,
+          MAX(e.created_at) AS last_event_at,
+          COUNT(e.id) AS event_count
+        FROM sessions s
+        LEFT JOIN events e ON e.session_id = s.id
+        WHERE s.id = ?
+        GROUP BY s.id, s.name, s.created_at`,
+      )
+      .get(sessionId) as
+      | {
+          id: string;
+          name: string | null;
+          created_at: number;
+          last_event_at: number | null;
+          event_count: number;
+        }
+      | undefined;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name ?? undefined,
+      createdAt: row.created_at,
+      lastEventAt: row.last_event_at,
+      eventCount: row.event_count,
+    };
+  }
+
+  updateSessionName(sessionId: string, name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    this.db.query("UPDATE sessions SET name = ? WHERE id = ?").run(trimmed, sessionId);
   }
 
   getLastSessionId(): string | null {

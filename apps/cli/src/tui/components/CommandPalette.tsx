@@ -81,10 +81,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       borderColor="#3b82f6"
       borderStyle="double"
       backgroundColor="#020617"
-      width="72%"
-      height={16}
-      left="14%"
-      top="14%"
+      width="74%"
+      height={18}
+      left="13%"
+      top="12%"
       flexDirection="column"
       padding={1}
     >
@@ -96,13 +96,14 @@ export function CommandPalette(props: CommandPaletteProps) {
         <text fg="#64748b">{filtered().length} cmds</text>
       </box>
 
-      <box marginTop={1} marginBottom={1}>
+      <box marginTop={1} marginBottom={1} border borderColor="#1e293b" paddingLeft={1}>
         <text fg="#3b82f6">{"> "}</text>
         <input
           ref={(value: unknown) => {
             inputRef = value;
           }}
           placeholder="search command..."
+          value={query()}
           onInput={(value: string) => setQuery(value)}
         />
       </box>
@@ -115,14 +116,14 @@ export function CommandPalette(props: CommandPaletteProps) {
             return (
               <box
                 flexDirection="row"
+                width="100%"
                 paddingLeft={1}
                 paddingRight={1}
                 backgroundColor={selected() ? "#1d4ed8" : undefined}
               >
-                <Show when={command.category}>
-                  <text fg={selected() ? "#dbeafe" : "#64748b"}>{`${command.category} · `}</text>
-                </Show>
-                <text fg={selected() ? "#eff6ff" : "#e2e8f0"}>{command.title}</text>
+                <text fg={selected() ? "#dbeafe" : "#64748b"}>{command.category ?? "command"}</text>
+                <text fg={selected() ? "#dbeafe" : "#64748b"}>{" · "}</text>
+                <text fg={selected() ? "#eff6ff" : "#e2e8f0"} attributes={1}>{command.title}</text>
                 <Show when={command.hint}>
                   <text fg={selected() ? "#dbeafe" : "#94a3b8"}>{` · ${command.hint}`}</text>
                 </Show>

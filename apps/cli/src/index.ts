@@ -372,7 +372,7 @@ program
 
     const baseUrl = resolveBaseUrl(opts.baseUrl);
     const modelId =
-      opts.model ?? process.env.BLAH_MODEL_ID ?? config.model ?? "openai:gpt-5-mini";
+      opts.model ?? process.env.BLAH_MODEL_ID ?? config.model ?? "zai:glm-4.7";
 
     const timeoutMs = Number(opts.timeoutMs ?? config.timeout?.modelMs ?? 120000);
 

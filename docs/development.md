@@ -43,6 +43,22 @@ Start interactive TUI:
 bun run dev
 ```
 
+TUI key map:
+
+- `Enter` send
+- `Shift+Enter` newline
+- `Ctrl+K` command palette
+- `Ctrl+N` new session
+- `Ctrl+P` previous session
+- `Ctrl+Shift+N` next session
+- `Ctrl+S` toggle status panel
+- `Ctrl+E` toggle system stream
+
+Session naming:
+
+- first prompt in unnamed session triggers auto-title generation
+- fallback title uses first prompt words if model naming fails
+
 Run one task:
 
 ```bash
@@ -74,7 +90,7 @@ Create `blah-code.json` in your workspace:
 
 ```json
 {
-  "model": "openai:gpt-5-mini",
+  "model": "zai:glm-4.7",
   "timeout": {
     "modelMs": 120000
   },
