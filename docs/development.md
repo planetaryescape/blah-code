@@ -51,6 +51,8 @@ Daemon attach precedence for plain `blah-code` / `bun run dev`:
 4. local daemon URL from `daemon.host` + `daemon.port`
 
 If selected daemon URL is local and down, CLI auto-starts daemon before opening TUI.
+If selected daemon URL is remote and unreachable (from env/config), CLI falls back to local managed daemon.
+Explicit `--attach <url>` remains strict (no fallback).
 
 TUI key map:
 

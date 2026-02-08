@@ -38,7 +38,8 @@ Default runtime is daemon-first:
 
 - attach order: `--attach` -> `BLAH_DAEMON_URL` -> `daemon.attachUrl` -> local daemon host/port
 - if local daemon is down, `blah-code` auto-starts it
-- if remote daemon is down, startup fails fast with diagnostics
+- if configured remote daemon is down, CLI falls back to local managed daemon automatically
+- only explicit `--attach <url>` stays fail-fast when unreachable
 
 TUI defaults:
 

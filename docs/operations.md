@@ -13,7 +13,8 @@ Daemon-first runtime:
 - plain TUI attaches daemon by default
 - attach precedence: `--attach` -> `BLAH_DAEMON_URL` -> `daemon.attachUrl` -> local host/port
 - local target down => CLI auto-starts daemon
-- remote target down => startup fails fast with attach diagnostics
+- configured remote target down => CLI falls back to local managed daemon
+- explicit `--attach` target down => startup fails fast with attach diagnostics
 
 One-shot run:
 
