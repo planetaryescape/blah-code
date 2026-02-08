@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.2.0...cli-v0.3.0) (2026-02-08)
+
+
+### Features
+
+* add interactive TUI and runtime observability ([1abcbdf](https://github.com/planetaryescape/blah-code/commit/1abcbdfe27fbe3b203c0a01ba755732d3eab4aeb))
+* add interactive TUI and runtime observability ([87c1a4a](https://github.com/planetaryescape/blah-code/commit/87c1a4ad3dfe7114db29f966cafaf7c2f39c8d26))
+
 ## [0.2.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.1.0...cli-v0.2.0) (2026-02-07)
 
 
