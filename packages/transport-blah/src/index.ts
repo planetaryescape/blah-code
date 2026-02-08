@@ -124,6 +124,7 @@ export class BlahTransport implements ModelTransport {
       "When you need a tool, respond ONLY with JSON:",
       '{"type":"tool_call","tool":"<name>","arguments":{...}}',
       "No markdown fences when calling tools.",
+      'When calling a tool: response must start with "{" and end with "}" (no prose before/after).',
       "If no tool needed, provide normal assistant answer.",
       "Available tools:",
       toolBlock,
@@ -226,14 +227,16 @@ export class BlahTransport implements ModelTransport {
             const payload = JSON.parse(event.data) as {
               status?: string;
               error?: string | { message?: string };
-              messages?: Array<{
+              messages?: unknown;
+            };
+
+            const messages: Array<{
                 _id: string;
                 role: string;
                 status?: string;
                 content?: string;
                 partialContent?: string;
-              }>;
-            };
+              }> = Array.isArray((payload as any).messages) ? ((payload as any).messages as any) : [];
 
             if (payload.status === "error") {
               const message =
@@ -245,7 +248,6 @@ export class BlahTransport implements ModelTransport {
               return;
             }
 
-            const messages = payload.messages ?? [];
             const userIndex = messages.findIndex((m) => m._id === userMessageId);
             if (userIndex < 0) return;
             const assistants = messages.slice(userIndex + 1).filter((m) => m.role === "assistant");
@@ -304,9 +306,12 @@ export class BlahTransport implements ModelTransport {
           userMessageId,
           timeoutMs,
         }, "model wait timed out");
-        const listed = await this.cliRpc<Array<{ _id: string; role: string; content?: string }>>("listMessages", {
+        const listedRaw = await this.cliRpc<unknown>("listMessages", {
           conversationId,
         }).catch(() => []);
+        const listed: Array<{ _id: string; role: string; content?: string }> = Array.isArray(listedRaw)
+          ? (listedRaw as any)
+          : [];
         const userIndex = listed.findIndex((m) => m._id === userMessageId);
         const assistant = listed.slice(userIndex + 1).filter((m) => m.role === "assistant").at(-1);
         if (assistant?.content?.trim()) {
@@ -320,9 +325,12 @@ export class BlahTransport implements ModelTransport {
       }
 
       if (doneSignal || String(err).includes("done") || String(err).includes("AbortError")) {
-        const listed = await this.cliRpc<Array<{ _id: string; role: string; content?: string }>>("listMessages", {
+        const listedRaw = await this.cliRpc<unknown>("listMessages", {
           conversationId,
         });
+        const listed: Array<{ _id: string; role: string; content?: string }> = Array.isArray(listedRaw)
+          ? (listedRaw as any)
+          : [];
         const userIndex = listed.findIndex((m) => m._id === userMessageId);
         const assistant = listed.slice(userIndex + 1).filter((m) => m.role === "assistant").at(-1);
         if (assistant?.content?.trim()) return { text: assistant.content };

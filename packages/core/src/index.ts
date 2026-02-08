@@ -78,24 +78,93 @@ export interface AgentRunOptions {
 const toolCallSchema = z.object({
   type: z.literal("tool_call"),
   tool: z.string(),
-  arguments: z.record(z.string(), z.unknown()),
+  // allow models to omit args for no-arg tools
+  arguments: z.record(z.string(), z.unknown()).default({}),
 });
+
+function tryParseToolCall(candidate: string) {
+  try {
+    const parsed = JSON.parse(candidate);
+    const result = toolCallSchema.safeParse(parsed);
+    if (result.success) return result.data;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function extractFencedBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  const re = /```[a-z0-9_-]*\s*([\s\S]*?)```/gi;
+  for (const match of text.matchAll(re)) {
+    if (match[1]) blocks.push(match[1].trim());
+  }
+  return blocks;
+}
+
+function extractBalancedJsonObject(text: string, start: number): string | null {
+  if (start < 0 || start >= text.length || text[start] !== "{") return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i] ?? "";
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+      continue;
+    }
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
 
 function extractToolCall(text: string) {
   const trimmed = text.trim();
-  const candidates = [trimmed];
-  const jsonFence = trimmed.match(/```json\s*([\s\S]*?)```/i);
-  if (jsonFence?.[1]) {
-    candidates.push(jsonFence[1].trim());
+
+  // 1) whole response JSON
+  const direct = tryParseToolCall(trimmed);
+  if (direct) return direct;
+
+  // 2) any fenced code blocks (language tag optional)
+  for (const block of extractFencedBlocks(trimmed)) {
+    const parsed = tryParseToolCall(block);
+    if (parsed) return parsed;
   }
 
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      const result = toolCallSchema.safeParse(parsed);
-      if (result.success) return result.data;
-    } catch {
-      // continue
+  // 3) heuristic: locate a JSON object containing "tool_call" inside mixed prose
+  const idx = trimmed.indexOf("tool_call");
+  if (idx >= 0) {
+    const open = trimmed.lastIndexOf("{", idx);
+    if (open >= 0) {
+      const obj = extractBalancedJsonObject(trimmed, open);
+      if (obj) {
+        const parsed = tryParseToolCall(obj);
+        if (parsed) return parsed;
+      }
     }
   }
 
