@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import type { RuntimeStatus } from "../runtime";
+import { theme } from "../theme";
 
 interface StatusPanelProps {
   status: RuntimeStatus | null;
@@ -11,26 +12,37 @@ export function StatusPanel(props: StatusPanelProps) {
     !value ? "-" : value.length > max ? `${value.slice(0, max - 1)}…` : value;
 
   return (
-    <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220" padding={1} width={46}>
-      <text fg="#e2e8f0" attributes={1}>runtime</text>
+    <box
+      flexDirection="column"
+      border
+      borderStyle={theme.border.panelStyle}
+      borderColor={theme.colors.border}
+      backgroundColor={theme.colors.panel}
+      padding={1}
+      width={theme.layout.inspectorWidth}
+    >
+      <text fg={theme.colors.text} attributes={1}>inspector</text>
       <Show when={props.status}>
-        <text fg="#cbd5e1">mode: {props.status?.mode === "in_process" ? "local" : "daemon"}</text>
-        <text fg="#cbd5e1">model: {props.status?.modelId}</text>
-        <text fg={props.status?.daemonHealthy ? "#86efac" : "#fca5a5"}>
+        <text fg={theme.colors.muted} attributes={1}>runtime</text>
+        <text fg={theme.colors.text}>mode: {props.status?.mode === "in_process" ? "local" : "daemon"}</text>
+        <text fg={theme.colors.text}>model: {props.status?.modelId}</text>
+        <text fg={props.status?.daemonHealthy ? theme.colors.success : theme.colors.danger}>
           daemon: {props.status?.daemonHealthy ? "up" : "down"}
         </text>
-        <text fg={props.status?.apiKeyPresent ? "#86efac" : "#fca5a5"}>
+        <text fg={props.status?.apiKeyPresent ? theme.colors.success : theme.colors.danger}>
           api key: {props.status?.apiKeyPresent ? "present" : "missing"}
         </text>
-        <text fg="#cbd5e1">active sessions: {props.status?.activeSessions.length ?? 0}</text>
-        <text fg="#94a3b8">cwd: {clamp(props.status?.cwd, 40)}</text>
-        <text fg="#64748b">db: {clamp(props.status?.dbPath, 40)}</text>
-        <text fg="#64748b">logs: {clamp(props.status?.logPath, 40)}</text>
+        <text fg={theme.colors.text}>active: {props.status?.activeSessions.length ?? 0}</text>
+        <text fg={theme.colors.muted}>cwd: {clamp(props.status?.cwd, 38)}</text>
+        <text fg={theme.colors.faint}>db: {clamp(props.status?.dbPath, 38)}</text>
+        <text fg={theme.colors.faint}>logs: {clamp(props.status?.logPath, 38)}</text>
       </Show>
-      <text fg="#94a3b8" attributes={1}>recent logs</text>
-      <scrollbox flexGrow={1} border borderColor="#1e293b" paddingLeft={1} paddingRight={1}>
+      <box marginTop={1}>
+        <text fg={theme.colors.muted} attributes={1}>logs</text>
+      </box>
+      <scrollbox flexGrow={1} border borderColor={theme.colors.border} paddingLeft={1} paddingRight={1}>
         <For each={props.logs}>
-          {(line) => <text fg="#94a3b8">{line}</text>}
+          {(line) => <text fg={theme.colors.muted}>{line}</text>}
         </For>
       </scrollbox>
     </box>

@@ -2,13 +2,15 @@ import type { PermissionRequest, PermissionResolution } from "@blah-code/core";
 import type { SessionSummary } from "@blah-code/session";
 import { render, useKeyboard, useRenderer } from "@opentui/solid";
 import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
+import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { EventTimeline } from "./components/EventTimeline";
 import { PermissionModal } from "./components/PermissionModal";
 import { SessionList } from "./components/SessionList";
 import { StatusPanel } from "./components/StatusPanel";
 import { createRuntimeClient, type RuntimeClient } from "./runtime";
 import type { TuiEvent } from "./state";
+import { formatSessionTime } from "./state";
+import { theme } from "./theme";
 
 interface RunTuiOptions {
   cwd: string;
@@ -68,9 +70,7 @@ function mergeEvents(current: TuiEvent[], incoming: TuiEvent[]): TuiEvent[] {
 
 function payloadText(event: TuiEvent): string {
   const payload =
-    typeof event.payload === "object" && event.payload !== null
-      ? (event.payload as { text?: string })
-      : {};
+    typeof event.payload === "object" && event.payload !== null ? (event.payload as { text?: string }) : {};
   return typeof payload.text === "string" ? payload.text : "";
 }
 
@@ -89,9 +89,7 @@ function formatAge(ts: number | null, now: number): string {
 
 function activityLabel(event: TuiEvent): string {
   const payload =
-    typeof event.payload === "object" && event.payload !== null
-      ? (event.payload as Record<string, unknown>)
-      : {};
+    typeof event.payload === "object" && event.payload !== null ? (event.payload as Record<string, unknown>) : {};
 
   if (event.kind === "tool_call") {
     const tool = typeof payload.tool === "string" ? payload.tool : "tool";
@@ -123,9 +121,13 @@ function TuiApp(props: TuiAppProps) {
   const [error, setError] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<Awaited<ReturnType<RuntimeClient["getStatus"]>> | null>(null);
   const [logs, setLogs] = createSignal<string[]>([]);
-  const [showStatus, setShowStatus] = createSignal(false);
+
+  const [showSessions, setShowSessions] = createSignal(true);
+  const [showInspector, setShowInspector] = createSignal(true);
+  const [showToolsExpanded, setShowToolsExpanded] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
   const [showSystemStream, setShowSystemStream] = createSignal(false);
+
   const [pendingPermission, setPendingPermission] = createSignal<PermissionRequest | null>(null);
   const [modelId, setModelId] = createSignal(props.modelId ?? "");
   const [clockTick, setClockTick] = createSignal(Date.now());
@@ -140,9 +142,7 @@ function TuiApp(props: TuiAppProps) {
   const cancelledByUser = new Set<string>();
   const titleInFlight = new Set<string>();
 
-  const selectedSession = createMemo(() =>
-    sessions().find((session) => session.id === selectedSessionId()),
-  );
+  const selectedSession = createMemo(() => sessions().find((session) => session.id === selectedSessionId()));
 
   const selectedEvents = createMemo(() => {
     const sessionId = selectedSessionId();
@@ -170,15 +170,11 @@ function TuiApp(props: TuiAppProps) {
   const runStatusText = createMemo(() => {
     const state = selectedRunState();
     if (state.phase === "running") {
-      const elapsed = state.startedAt
-        ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s`
-        : "0s";
+      const elapsed = state.startedAt ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s` : "0s";
       return `thinking ${elapsed}`;
     }
     if (state.phase === "tool") {
-      const elapsed = state.startedAt
-        ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s`
-        : "0s";
+      const elapsed = state.startedAt ? `${Math.max(0, Math.floor((clockTick() - state.startedAt) / 1000))}s` : "0s";
       return `tool ${elapsed}`;
     }
     if (state.phase === "failed") return "failed";
@@ -188,36 +184,25 @@ function TuiApp(props: TuiAppProps) {
 
   const runStatusColor = createMemo(() => {
     const state = selectedRunState();
-    if (state.phase === "running") return "#fbbf24";
-    if (state.phase === "tool") return "#93c5fd";
-    if (state.phase === "failed") return "#fca5a5";
-    if (state.phase === "cancelled") return "#f59e0b";
-    return "#64748b";
-  });
-
-  const elapsedRunAge = createMemo(() => {
-    const startedAt = selectedRunState().startedAt;
-    if (!startedAt) return "-";
-    return formatAge(startedAt, clockTick());
+    if (state.phase === "running") return theme.colors.warning;
+    if (state.phase === "tool") return theme.colors.accent;
+    if (state.phase === "failed") return theme.colors.danger;
+    if (state.phase === "cancelled") return theme.colors.warning;
+    return theme.colors.faint;
   });
 
   const runtimeModeText = createMemo(() => (status()?.mode === "daemon" ? "daemon" : "local"));
   const daemonUp = createMemo(() => status()?.daemonHealthy ?? false);
   const daemonText = createMemo(() => (daemonUp() ? "up" : "down"));
 
-  const lastEventAt = createMemo(() => {
-    const list = selectedEvents();
-    const last = list.at(-1);
-    return last?.createdAt ?? null;
-  });
-
+  const lastEventAt = createMemo(() => selectedEvents().at(-1)?.createdAt ?? null);
   const lastEventAge = createMemo(() => formatAge(lastEventAt(), clockTick()));
 
   const waitingHint = createMemo(() => {
     if (!running()) return null;
-    const age = lastEventAt();
-    if (!age) return "waiting for model/tool...";
-    if (clockTick() - age < 3000) return null;
+    const last = lastEventAt();
+    if (!last) return "waiting for model/tool...";
+    if (clockTick() - last < 3000) return null;
     return "waiting for model/tool...";
   });
 
@@ -225,7 +210,7 @@ function TuiApp(props: TuiAppProps) {
     const currentError = error();
     if (!currentError) return null;
     if (!/daemon|stream|disconnect|network/i.test(currentError)) return null;
-    return "connection issue. check daemon health with /status or `blah-code status --attach <url>`";
+    return "connection issue. check daemon health / logs";
   });
 
   const latestActivity = createMemo(() => {
@@ -244,10 +229,18 @@ function TuiApp(props: TuiAppProps) {
           "done",
         ].includes(event.kind),
       )
-      .slice(-4);
+      .slice(-2);
     if (relevant.length === 0) return "no activity";
     return relevant
-      .map((event) => `${activityLabel(event)} (${new Date(event.createdAt).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })})`)
+      .map(
+        (event) =>
+          `${activityLabel(event)} (${new Date(event.createdAt).toLocaleTimeString("en-US", {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          })})`,
+      )
       .join(" · ");
   });
 
@@ -256,9 +249,7 @@ function TuiApp(props: TuiAppProps) {
     if (!session) return "none";
     const title = normalizeTitle(session.name);
     if (title) return title;
-    return session.id.length > 20
-      ? `${session.id.slice(0, 8)}…${session.id.slice(session.id.length - 6)}`
-      : session.id;
+    return session.id.length > 20 ? `${session.id.slice(0, 8)}…${session.id.slice(session.id.length - 6)}` : session.id;
   });
 
   function focusInputSoon() {
@@ -270,31 +261,19 @@ function TuiApp(props: TuiAppProps) {
   function setSessionEvents(sessionId: string, updater: (events: TuiEvent[]) => TuiEvent[]) {
     setEventsBySession((current) => {
       const next = updater(current[sessionId] ?? []);
-      return {
-        ...current,
-        [sessionId]: next,
-      };
+      return { ...current, [sessionId]: next };
     });
   }
 
   function setSessionStreaming(sessionId: string, value: string) {
-    setStreamBySession((current) => ({
-      ...current,
-      [sessionId]: value,
-    }));
+    setStreamBySession((current) => ({ ...current, [sessionId]: value }));
   }
 
-  function setSessionRunState(
-    sessionId: string,
-    next: SessionRunState | ((state: SessionRunState) => SessionRunState),
-  ) {
+  function setSessionRunState(sessionId: string, next: SessionRunState | ((s: SessionRunState) => SessionRunState)) {
     setRunStateBySession((current) => {
       const prev = asRunState(current[sessionId]);
       const value = typeof next === "function" ? next(prev) : next;
-      return {
-        ...current,
-        [sessionId]: value,
-      };
+      return { ...current, [sessionId]: value };
     });
   }
 
@@ -324,7 +303,7 @@ function TuiApp(props: TuiAppProps) {
     }
 
     const selected = selectedSessionId();
-    if (selected && listed.length > 0 && !listed.some((session) => session.id === selected)) {
+    if (selected && listed.length > 0 && !listed.some((s) => s.id === selected)) {
       selectSession(listed[0].id);
     }
   }
@@ -334,9 +313,9 @@ function TuiApp(props: TuiAppProps) {
       const nextStatus = await props.runtime.getStatus();
       setStatus(nextStatus);
       if (!modelId()) setModelId(nextStatus.modelId);
-    } catch (error) {
+    } catch {
       setStatus((current) => (current ? { ...current, daemonHealthy: false } : current));
-      throw error;
+      throw new Error("status refresh failed");
     }
   }
 
@@ -356,7 +335,7 @@ function TuiApp(props: TuiAppProps) {
     const list = sessions();
     if (list.length === 0) return;
 
-    const index = list.findIndex((session) => session.id === selectedSessionId());
+    const index = list.findIndex((s) => s.id === selectedSessionId());
     const start = index < 0 ? 0 : index;
     const next = ((start + offset) % list.length + list.length) % list.length;
     const sessionId = list[next]?.id;
@@ -368,10 +347,7 @@ function TuiApp(props: TuiAppProps) {
     setSessionEvents(event.sessionId, (current) => mergeEvents(current, [event]));
 
     if (event.kind === "run_started") {
-      setSessionRunState(event.sessionId, {
-        phase: "running",
-        startedAt: Date.now(),
-      });
+      setSessionRunState(event.sessionId, { phase: "running", startedAt: Date.now() });
       setSessionStreaming(event.sessionId, "");
       return;
     }
@@ -394,9 +370,7 @@ function TuiApp(props: TuiAppProps) {
 
     if (event.kind === "tool_call") {
       const payload =
-        typeof event.payload === "object" && event.payload !== null
-          ? (event.payload as Record<string, unknown>)
-          : {};
+        typeof event.payload === "object" && event.payload !== null ? (event.payload as Record<string, unknown>) : {};
       const tool = typeof payload.tool === "string" ? payload.tool : "tool";
       setSessionRunState(event.sessionId, (current) => ({
         phase: "tool",
@@ -429,21 +403,13 @@ function TuiApp(props: TuiAppProps) {
 
     if (event.kind === "run_failed" || event.kind === "model_timeout" || event.kind === "error") {
       const payload =
-        typeof event.payload === "object" && event.payload !== null
-          ? (event.payload as { message?: string })
-          : {};
+        typeof event.payload === "object" && event.payload !== null ? (event.payload as { message?: string }) : {};
       const message = typeof payload.message === "string" ? payload.message : event.kind;
       setSessionStreaming(event.sessionId, "");
       if (isCancelMessage(message) || cancelledByUser.has(event.sessionId)) {
-        setSessionRunState(event.sessionId, {
-          phase: "cancelled",
-          message,
-        });
+        setSessionRunState(event.sessionId, { phase: "cancelled", message });
       } else {
-        setSessionRunState(event.sessionId, {
-          phase: "failed",
-          message,
-        });
+        setSessionRunState(event.sessionId, { phase: "failed", message });
       }
       return;
     }
@@ -474,6 +440,18 @@ function TuiApp(props: TuiAppProps) {
     await props.runtime.cancelRun(sessionId);
   }
 
+  function toggleSessionsSidebar() {
+    setShowSessions((v) => !v);
+  }
+
+  function toggleInspector() {
+    setShowInspector((v) => !v);
+  }
+
+  function toggleTools() {
+    setShowToolsExpanded((v) => !v);
+  }
+
   async function executeCommand(command: string, arg: string): Promise<boolean> {
     if (command === "help") {
       setShowPalette(true);
@@ -492,8 +470,16 @@ function TuiApp(props: TuiAppProps) {
       return true;
     }
 
+    if (command === "toggle") {
+      if (arg === "sessions") toggleSessionsSidebar();
+      else if (arg === "inspector") toggleInspector();
+      else if (arg === "tools") toggleTools();
+      else setError("usage: /toggle sessions|inspector|tools");
+      return true;
+    }
+
     if (command === "status") {
-      setShowStatus((prev) => !prev);
+      toggleInspector();
       return true;
     }
 
@@ -504,7 +490,7 @@ function TuiApp(props: TuiAppProps) {
 
     if (command === "logs") {
       await refreshLogs();
-      setShowStatus(true);
+      setShowInspector(true);
       return true;
     }
 
@@ -537,16 +523,34 @@ function TuiApp(props: TuiAppProps) {
     return executeCommand(command, arg);
   }
 
-  const paletteCommands = createMemo<PaletteCommand[]>(() => [
-    { id: "new", title: "new session", hint: "create and switch", keybind: "ctrl+n", category: "session" },
-    { id: "sessions prev", title: "previous session", hint: "cycle backward", keybind: "ctrl+p", category: "session" },
-    { id: "sessions next", title: "next session", hint: "cycle forward", keybind: "ctrl+shift+n", category: "session" },
-    { id: "events", title: `${showSystemStream() ? "hide" : "show"} system stream`, keybind: "ctrl+e", category: "view" },
-    { id: "status", title: `${showStatus() ? "hide" : "show"} status panel`, keybind: "ctrl+s", category: "view" },
-    { id: "logs", title: "refresh logs", hint: "open runtime logs", keybind: "ctrl+l", category: "runtime" },
-    { id: "stop", title: "stop current run", hint: "cancel active generation", keybind: "ctrl+x", category: "runtime" },
-    { id: "quit", title: "quit", keybind: "ctrl+q", category: "app" },
-  ]);
+  const paletteItems = createMemo<PaletteItem[]>(() => {
+    const items: PaletteItem[] = [
+      { id: "new", title: "new session", hint: "create and switch", keybind: "ctrl+n", category: "session", kind: "command" },
+      { id: "sessions prev", title: "previous session", hint: "cycle backward", keybind: "ctrl+p", category: "session", kind: "command" },
+      { id: "sessions next", title: "next session", hint: "cycle forward", keybind: "ctrl+shift+n", category: "session", kind: "command" },
+      { id: "toggle sessions", title: `${showSessions() ? "hide" : "show"} sessions`, keybind: "ctrl+b", category: "view", kind: "command" },
+      { id: "toggle inspector", title: `${showInspector() ? "hide" : "show"} inspector`, keybind: "ctrl+s", category: "view", kind: "command" },
+      { id: "toggle tools", title: `${showToolsExpanded() ? "compact" : "expand"} tools`, keybind: "ctrl+t", category: "view", kind: "command" },
+      { id: "events", title: `${showSystemStream() ? "hide" : "show"} system stream`, keybind: "ctrl+e", category: "view", kind: "command" },
+      { id: "logs", title: "refresh logs", hint: "open inspector", keybind: "ctrl+l", category: "runtime", kind: "command" },
+      { id: "stop", title: "stop current run", hint: "cancel generation", keybind: "ctrl+x", category: "runtime", kind: "command" },
+      { id: "quit", title: "quit", keybind: "ctrl+q", category: "app", kind: "command" },
+    ];
+
+    for (const session of sessions().slice(0, 60)) {
+      const name = normalizeTitle(session.name) ?? (session.id.length > 18 ? `${session.id.slice(0, 8)}…${session.id.slice(-6)}` : session.id);
+      const time = formatSessionTime(session.lastEventAt ?? session.createdAt);
+      items.push({
+        id: `session:${session.id}`,
+        title: name,
+        hint: `${time} · ${session.eventCount}`,
+        kind: "session",
+        category: "sessions",
+      });
+    }
+
+    return items;
+  });
 
   async function maybeAutoRenameSession(sessionId: string, promptText: string) {
     const session = sessions().find((entry) => entry.id === sessionId);
@@ -590,10 +594,7 @@ function TuiApp(props: TuiAppProps) {
     if (!sessionId) return;
 
     void maybeAutoRenameSession(sessionId, value);
-    setSessionRunState(sessionId, {
-      phase: "running",
-      startedAt: Date.now(),
-    });
+    setSessionRunState(sessionId, { phase: "running", startedAt: Date.now() });
     setSessionStreaming(sessionId, "");
 
     try {
@@ -608,15 +609,9 @@ function TuiApp(props: TuiAppProps) {
     } catch (runError) {
       const message = runError instanceof Error ? runError.message : String(runError);
       if (isCancelMessage(message) || cancelledByUser.has(sessionId)) {
-        setSessionRunState(sessionId, {
-          phase: "cancelled",
-          message,
-        });
+        setSessionRunState(sessionId, { phase: "cancelled", message });
       } else {
-        setSessionRunState(sessionId, {
-          phase: "failed",
-          message,
-        });
+        setSessionRunState(sessionId, { phase: "failed", message });
         setError(message);
       }
     } finally {
@@ -646,6 +641,18 @@ function TuiApp(props: TuiAppProps) {
     if (withCtrl && evt.name === "k") {
       evt.preventDefault();
       setShowPalette(true);
+      return;
+    }
+
+    if (withCtrl && evt.name === "b") {
+      evt.preventDefault();
+      toggleSessionsSidebar();
+      return;
+    }
+
+    if (withCtrl && evt.name === "t") {
+      evt.preventDefault();
+      toggleTools();
       return;
     }
 
@@ -687,7 +694,7 @@ function TuiApp(props: TuiAppProps) {
 
     if (withCtrl && evt.name === "s") {
       evt.preventDefault();
-      setShowStatus((prev) => !prev);
+      toggleInspector();
       return;
     }
 
@@ -699,20 +706,12 @@ function TuiApp(props: TuiAppProps) {
       });
       return;
     }
-
-    if (withCtrl && evt.name === "up") {
-      evt.preventDefault();
-      cycleSession(-1);
-      return;
-    }
-
-    if (withCtrl && evt.name === "down") {
-      evt.preventDefault();
-      cycleSession(1);
-    }
   });
 
   onMount(async () => {
+    if (renderer.width < 110) setShowInspector(false);
+    if (renderer.width < 90) setShowSessions(false);
+
     await refreshSessions();
     await refreshStatus();
     await refreshLogs();
@@ -735,57 +734,63 @@ function TuiApp(props: TuiAppProps) {
   });
 
   return (
-    <box flexDirection="column" height="100%" backgroundColor="#020617">
-      <box flexDirection="column" border borderColor="#334155" backgroundColor="#0b1220">
-        <box flexDirection="row" paddingLeft={1} paddingRight={1}>
-          <text fg="#86efac" attributes={1}>blah code</text>
-          <text fg="#64748b"> · interactive</text>
-          <box flexGrow={1} />
-          <text fg="#94a3b8">model: {modelId() || "default"}</text>
-          <text fg="#64748b"> · </text>
-          <text fg="#bfdbfe">session: {sessionDisplayLabel()}</text>
-        </box>
-        <box flexDirection="row" paddingLeft={1} paddingRight={1}>
-          <text fg="#94a3b8">runtime: {runtimeModeText()}</text>
-          <text fg="#64748b"> · </text>
-          <text fg={daemonUp() ? "#86efac" : "#fca5a5"}>daemon: {daemonText()}</text>
-          <text fg="#64748b"> · </text>
-          <text fg={runStatusColor()}>state: {selectedRunState().phase}</text>
-          <text fg="#64748b"> · </text>
-          <text fg="#94a3b8">elapsed: {elapsedRunAge()}</text>
-          <text fg="#64748b"> · </text>
-          <text fg="#94a3b8">last event: {lastEventAge()}</text>
-        </box>
+    <box flexDirection="column" height="100%" backgroundColor={theme.colors.bg}>
+      <box
+        flexDirection="row"
+        border
+        borderStyle={theme.border.panelStyle}
+        borderColor={theme.colors.border}
+        backgroundColor={theme.colors.panel}
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg={theme.colors.text} attributes={1}>blah-code</text>
+        <text fg={theme.colors.faint}>{` · ${runtimeModeText()}`}</text>
+        <text fg={theme.colors.faint}>{` · daemon ${daemonText()}`}</text>
+        <box flexGrow={1} />
+        <text fg={theme.colors.muted}>model:</text>
+        <text fg={theme.colors.text}>{` ${modelId() || "default"}`}</text>
+        <text fg={theme.colors.faint}>{` · `}</text>
+        <text fg={theme.colors.muted}>session:</text>
+        <text fg={theme.colors.text}>{` ${sessionDisplayLabel()}`}</text>
+        <text fg={theme.colors.faint}>{` · `}</text>
+        <text fg={theme.colors.muted}>state:</text>
+        <text fg={runStatusColor()} attributes={1}>{` ${selectedRunState().phase}`}</text>
+        <text fg={theme.colors.faint}>{` · `}</text>
+        <text fg={theme.colors.muted}>last:</text>
+        <text fg={theme.colors.text}>{` ${lastEventAge()}`}</text>
       </box>
 
-      <box flexGrow={1} flexDirection="row" gap={1}>
-        <SessionList sessions={sessions()} selectedSessionId={selectedSessionId()} onSelect={selectSession} />
+      <box flexGrow={1} flexDirection="row" gap={theme.layout.gap}>
+        <Show when={showSessions()}>
+          <SessionList sessions={sessions()} selectedSessionId={selectedSessionId()} onSelect={selectSession} />
+        </Show>
 
         <box
           flexDirection="column"
           flexGrow={1}
           border
-          borderColor="#334155"
-          backgroundColor="#020b1b"
+          borderStyle={theme.border.panelStyle}
+          borderColor={theme.colors.border}
+          backgroundColor={theme.colors.panelAlt}
           padding={1}
         >
           <box flexDirection="row">
-            <text fg="#e2e8f0" attributes={1}>conversation</text>
+            <text fg={theme.colors.text} attributes={1}>chat</text>
+            <text fg={theme.colors.faint}>{` · ${latestActivity()}`}</text>
             <box flexGrow={1} />
-            <text fg={runStatusColor()}>{runStatusText()}</text>
-          </box>
-          <box border borderColor="#1e293b" backgroundColor="#020617" paddingLeft={1} paddingRight={1}>
-            <text fg="#94a3b8">activity: {latestActivity()}</text>
+            <text fg={runStatusColor()} attributes={1}>{runStatusText()}</text>
           </box>
           <EventTimeline
             events={selectedEvents()}
             streamingText={selectedStreamingText()}
             showSystemStream={showSystemStream()}
+            showToolsExpanded={showToolsExpanded()}
             runState={selectedRunState()}
           />
         </box>
 
-        <Show when={showStatus()}>
+        <Show when={showInspector()}>
           <StatusPanel status={status()} logs={logs()} />
         </Show>
       </box>
@@ -793,8 +798,9 @@ function TuiApp(props: TuiAppProps) {
       <box
         flexDirection="column"
         border
-        borderColor="#334155"
-        backgroundColor="#0b1220"
+        borderStyle={theme.border.panelStyle}
+        borderColor={theme.colors.border}
+        backgroundColor={theme.colors.panel}
         paddingLeft={1}
         paddingRight={1}
         paddingTop={1}
@@ -803,13 +809,14 @@ function TuiApp(props: TuiAppProps) {
         <box
           flexDirection="row"
           border
-          borderColor={running() ? "#f59e0b" : "#1e293b"}
-          backgroundColor="#020617"
+          borderStyle="single"
+          borderColor={running() ? theme.colors.warning : theme.colors.border}
+          backgroundColor={theme.colors.bg}
           paddingLeft={1}
           paddingRight={1}
           minHeight={3}
         >
-          <text fg={running() ? "#fbbf24" : "#64748b"}>{"> "}</text>
+          <text fg={running() ? theme.colors.warning : theme.colors.faint}>{"> "}</text>
           <textarea
             ref={(value: unknown) => {
               inputRef = value;
@@ -831,32 +838,41 @@ function TuiApp(props: TuiAppProps) {
             }}
           />
           <Show when={running()}>
-            <text fg="#fbbf24"> thinking...</text>
+            <text fg={theme.colors.warning} attributes={1}> thinking</text>
           </Show>
         </box>
-        <text fg="#64748b">
-          enter send · shift+enter newline · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+x stop · ctrl+e system · ctrl+s status · ctrl+q quit
+
+        <text fg={theme.colors.faint}>
+          enter send · shift+enter newline · ctrl+k palette · ctrl+b sessions · ctrl+s inspector · ctrl+t tools · ctrl+e system · ctrl+x stop · ctrl+q quit
         </text>
         <Show when={waitingHint()}>
-          <text fg="#fbbf24">{waitingHint()!}</text>
+          <text fg={theme.colors.warning}>{waitingHint()!}</text>
         </Show>
         <Show when={reconnectHint()}>
-          <text fg="#f59e0b">{reconnectHint()!}</text>
+          <text fg={theme.colors.warning}>{reconnectHint()!}</text>
         </Show>
         <Show when={error()}>
-          <text fg="#fca5a5">{error()}</text>
+          <text fg={theme.colors.danger}>{error()}</text>
         </Show>
       </box>
 
       <Show when={showPalette()}>
         <CommandPalette
-          commands={paletteCommands()}
+          items={paletteItems()}
           onClose={() => {
             setShowPalette(false);
             focusInputSoon();
           }}
-          onSelect={(commandId) => {
-            handleCommand(`/${commandId}`)
+          onSelect={(id) => {
+            const prefix = "session:";
+            if (id.startsWith(prefix)) {
+              selectSession(id.slice(prefix.length));
+              setShowPalette(false);
+              focusInputSoon();
+              return;
+            }
+
+            handleCommand(`/${id}`)
               .catch((commandError) => {
                 const message = commandError instanceof Error ? commandError.message : String(commandError);
                 setError(message);
