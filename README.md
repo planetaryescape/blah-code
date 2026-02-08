@@ -34,6 +34,11 @@ blah-code
 ```
 
 `blah-code` (no args) now opens the interactive TUI.
+Default runtime is daemon-first:
+
+- attach order: `--attach` -> `BLAH_DAEMON_URL` -> `daemon.attachUrl` -> local daemon host/port
+- if local daemon is down, `blah-code` auto-starts it
+- if remote daemon is down, startup fails fast with diagnostics
 
 TUI defaults:
 
@@ -67,6 +72,7 @@ Env vars:
 
 - `BLAH_API_KEY` optional if you use `blah-code login`
 - `BLAH_BASE_URL` optional (default `https://blah.chat`)
+- `BLAH_DAEMON_URL` optional default daemon attach target for TUI
 
 If not logged in via `blah-code`, it can fall back to credentials from existing `blah` CLI login.
 
@@ -86,7 +92,8 @@ Create in project root:
   },
   "daemon": {
     "host": "127.0.0.1",
-    "port": 3789
+    "port": 3789,
+    "attachUrl": "http://127.0.0.1:3789"
   },
   "permission": {
     "*": "ask",
@@ -135,6 +142,12 @@ Runtime artifacts:
 
 - session DB: `~/.blah-code/sessions.db`
 - logs: `~/.blah-code/logs/current.log`
+
+Runtime verification quick checks:
+
+- `blah-code status` (daemon mode/health/model/db/log paths)
+- `blah-code logs --lines 200` (recent runtime log lines)
+- `blah-code events <sessionId>` (event timeline evidence: run/tool/failure)
 
 ## docs
 

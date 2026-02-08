@@ -54,7 +54,7 @@ Treat unknown MCP tools as high privilege.
 - event log is source of truth for replay/inspection.
 - auth for `blah-code login` stored via conf (`blah-code/auth` + `blah-code/config`).
 
-## 8) current parity gaps vs opencode
+## 8) current parity gaps vs reference UX
 
 Not complete yet:
 

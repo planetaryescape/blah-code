@@ -41,6 +41,7 @@ export interface RuntimeClient {
   listEvents(sessionId: string): Promise<TuiEvent[]>;
   renameSession(sessionId: string, name: string): Promise<void>;
   suggestSessionName(prompt: string): Promise<string | null>;
+  cancelRun(sessionId: string): Promise<void>;
   runPrompt(input: PromptInput): Promise<{ output: string }>;
   getStatus(): Promise<RuntimeStatus>;
   getLogs(lines?: number): Promise<string[]>;
@@ -90,6 +91,7 @@ class LocalRuntime implements RuntimeClient {
   private baseUrl: string;
   private daemonUrl: string;
   private activeSessions = new Set<string>();
+  private runAbortControllers = new Map<string, AbortController>();
 
   constructor(options: RuntimeOptions) {
     this.cwd = options.cwd;
@@ -153,6 +155,10 @@ class LocalRuntime implements RuntimeClient {
     }
   }
 
+  async cancelRun(sessionId: string): Promise<void> {
+    this.runAbortControllers.get(sessionId)?.abort("cancelled");
+  }
+
   async runPrompt(input: PromptInput): Promise<{ output: string }> {
     const apiKey = resolveApiKey();
     if (!apiKey) {
@@ -165,7 +171,9 @@ class LocalRuntime implements RuntimeClient {
     });
     const runner = new AgentRunner(transport);
     const toolRuntime = await createToolRuntime({ mcpServers: this.config.mcp });
+    const runCtrl = new AbortController();
     this.activeSessions.add(input.sessionId);
+    this.runAbortControllers.set(input.sessionId, runCtrl);
 
     try {
       const userEvent = this.store.appendEvent(input.sessionId, "user", { text: input.prompt });
@@ -176,6 +184,7 @@ class LocalRuntime implements RuntimeClient {
         modelId: input.modelId ?? this.modelId,
         timeoutMs: input.timeoutMs ?? this.timeoutMs,
         cwd: this.cwd,
+        signal: runCtrl.signal,
         policy: this.config.permission,
         toolRuntime,
         onEvent: (event) => {
@@ -191,6 +200,7 @@ class LocalRuntime implements RuntimeClient {
       return { output: result.text };
     } finally {
       this.activeSessions.delete(input.sessionId);
+      this.runAbortControllers.delete(input.sessionId);
       await toolRuntime.close();
     }
   }
@@ -262,6 +272,12 @@ class RemoteRuntime implements RuntimeClient {
     return null;
   }
 
+  async cancelRun(sessionId: string): Promise<void> {
+    await this.request(`/v1/sessions/${sessionId}/cancel`, {
+      method: "POST",
+    });
+  }
+
   private async streamEvents(
     sessionId: string,
     onEvent: (event: TuiEvent) => void,
@@ -269,7 +285,9 @@ class RemoteRuntime implements RuntimeClient {
     signal?: AbortSignal,
   ): Promise<void> {
     const response = await fetch(`${this.baseUrl}/v1/sessions/${sessionId}/events/stream`, { signal });
-    if (!response.ok || !response.body) return;
+    if (!response.ok || !response.body) {
+      throw new Error(`daemon stream unavailable (${response.status})`);
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -315,31 +333,65 @@ class RemoteRuntime implements RuntimeClient {
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        if (!signal?.aborted) {
+          throw new Error("daemon event stream disconnected");
+        }
+        break;
+      }
       parser.feed(decoder.decode(value, { stream: true }));
       if (signal?.aborted) break;
     }
   }
 
   async runPrompt(input: PromptInput): Promise<{ output: string }> {
-    const ctrl = new AbortController();
+    const streamCtrl = new AbortController();
+    const promptCtrl = new AbortController();
+    let streamError: Error | null = null;
+
+    const emitTerminalFailure = (message: string) => {
+      if (!input.onEvent) return;
+      const now = Date.now();
+      input.onEvent({
+        id: crypto.randomUUID(),
+        sessionId: input.sessionId,
+        kind: "run_failed",
+        payload: {
+          message,
+          source: "daemon_stream",
+        },
+        createdAt: now,
+      });
+    };
+
     const streamPromise = input.onEvent
-      ? this.streamEvents(input.sessionId, input.onEvent, input.onPermissionRequest, ctrl.signal).catch(() => undefined)
+      ? this.streamEvents(input.sessionId, input.onEvent, input.onPermissionRequest, streamCtrl.signal).catch((error) => {
+          if (streamCtrl.signal.aborted) return;
+          streamError = error instanceof Error ? error : new Error(String(error));
+          emitTerminalFailure(streamError.message);
+          promptCtrl.abort("stream_disconnected");
+        })
       : Promise.resolve();
 
     try {
       const json = await this.request<{ output: string }>(`/v1/sessions/${input.sessionId}/prompt`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: promptCtrl.signal,
         body: JSON.stringify({
           prompt: input.prompt,
           modelId: input.modelId,
           timeoutMs: input.timeoutMs,
         }),
       });
+      if (streamError) throw streamError;
       return { output: json.output };
+    } catch (error) {
+      if (streamError) throw streamError;
+      throw error;
     } finally {
-      ctrl.abort();
+      streamCtrl.abort();
+      promptCtrl.abort();
       await streamPromise;
     }
   }

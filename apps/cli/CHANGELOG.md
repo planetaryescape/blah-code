@@ -13,7 +13,7 @@
 
 ### Features
 
-* overhaul TUI to match opencode feel ([26ed2e3](https://github.com/planetaryescape/blah-code/commit/26ed2e3fb0301971dd791a7beb7d1ff54b01a916))
+* overhaul TUI interaction and layout polish ([26ed2e3](https://github.com/planetaryescape/blah-code/commit/26ed2e3fb0301971dd791a7beb7d1ff54b01a916))
 
 
 ### Bug Fixes

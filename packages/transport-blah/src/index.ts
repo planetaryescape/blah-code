@@ -23,6 +23,7 @@ export interface ModelTransport {
     modelId: string;
     tools: ToolSpec[];
     timeoutMs?: number;
+    signal?: AbortSignal;
     onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }>;
 }
@@ -146,8 +147,13 @@ export class BlahTransport implements ModelTransport {
     modelId: string;
     tools: ToolSpec[];
     timeoutMs?: number;
+    signal?: AbortSignal;
     onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }> {
+    if (input.signal?.aborted) {
+      throw new Error("Run cancelled by user");
+    }
+
     const conversationId = await this.ensureConversation(input.modelId);
     const prompt = this.renderPrompt(input.messages, input.tools);
 
@@ -161,6 +167,7 @@ export class BlahTransport implements ModelTransport {
       conversationId,
       sent.userMessageId,
       input.timeoutMs ?? 120000,
+      input.signal,
       input.onDelta,
     );
   }
@@ -169,10 +176,24 @@ export class BlahTransport implements ModelTransport {
     conversationId: string,
     userMessageId: string,
     timeoutMs: number,
+    externalSignal?: AbortSignal,
     onDelta?: (chunk: { text: string; done?: boolean }) => void,
   ): Promise<{ text: string }> {
     const ctrl = new AbortController();
     let timedOut = false;
+    let doneSignal = false;
+    let cancelled = false;
+    let streamError: Error | null = null;
+    const onExternalAbort = () => {
+      cancelled = true;
+      ctrl.abort("cancelled");
+    };
+
+    if (externalSignal) {
+      if (externalSignal.aborted) onExternalAbort();
+      else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+
     const timer = setTimeout(() => {
       timedOut = true;
       ctrl.abort("timeout");
@@ -198,12 +219,32 @@ export class BlahTransport implements ModelTransport {
 
       let latestText = "";
       let emittedText = "";
-      let streamError: Error | null = null;
       const parser = createParser({
         onEvent: (event: EventSourceMessage) => {
           if (!event.data) return;
           try {
-            const payload = JSON.parse(event.data) as { messages?: Array<{ _id: string; role: string; status?: string; content?: string; partialContent?: string }> };
+            const payload = JSON.parse(event.data) as {
+              status?: string;
+              error?: string | { message?: string };
+              messages?: Array<{
+                _id: string;
+                role: string;
+                status?: string;
+                content?: string;
+                partialContent?: string;
+              }>;
+            };
+
+            if (payload.status === "error") {
+              const message =
+                typeof payload.error === "string"
+                  ? payload.error
+                  : (payload.error?.message ?? "Assistant generation failed");
+              streamError = new Error(message);
+              ctrl.abort("error");
+              return;
+            }
+
             const messages = payload.messages ?? [];
             const userIndex = messages.findIndex((m) => m._id === userMessageId);
             if (userIndex < 0) return;
@@ -226,6 +267,7 @@ export class BlahTransport implements ModelTransport {
             }
 
             if (last.status === "complete" && latestText.trim()) {
+              doneSignal = true;
               ctrl.abort("done");
             }
             if (last.status === "error") {
@@ -245,6 +287,10 @@ export class BlahTransport implements ModelTransport {
         if (streamError) {
           throw streamError;
         }
+      }
+
+      if (streamError) {
+        throw streamError;
       }
 
       if (!latestText.trim()) {
@@ -269,7 +315,11 @@ export class BlahTransport implements ModelTransport {
         throw new Error(`Model response timeout after ${timeoutMs}ms`);
       }
 
-      if (String(err).includes("done") || String(err).includes("AbortError")) {
+      if (cancelled) {
+        throw new Error("Run cancelled by user");
+      }
+
+      if (doneSignal || String(err).includes("done") || String(err).includes("AbortError")) {
         const listed = await this.cliRpc<Array<{ _id: string; role: string; content?: string }>>("listMessages", {
           conversationId,
         });
@@ -285,6 +335,9 @@ export class BlahTransport implements ModelTransport {
       throw err;
     } finally {
       clearTimeout(timer);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
     }
   }
 }

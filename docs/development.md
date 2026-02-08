@@ -43,6 +43,15 @@ Start interactive TUI:
 bun run dev
 ```
 
+Daemon attach precedence for plain `blah-code` / `bun run dev`:
+
+1. `--attach <url>`
+2. `BLAH_DAEMON_URL`
+3. `daemon.attachUrl` from config
+4. local daemon URL from `daemon.host` + `daemon.port`
+
+If selected daemon URL is local and down, CLI auto-starts daemon before opening TUI.
+
 TUI key map:
 
 - `Enter` send
@@ -53,6 +62,7 @@ TUI key map:
 - `Ctrl+Shift+N` next session
 - `Ctrl+S` toggle status panel
 - `Ctrl+E` toggle system stream
+- `Ctrl+X` cancel run
 
 Session naming:
 
@@ -100,7 +110,8 @@ Create `blah-code.json` in your workspace:
   },
   "daemon": {
     "host": "127.0.0.1",
-    "port": 3789
+    "port": 3789,
+    "attachUrl": "http://127.0.0.1:3789"
   },
   "permission": {
     "*": "ask",
@@ -146,6 +157,9 @@ check `BLAH_BASE_URL` and verify API key validity.
 
 - run timeouts / blind failures:
 check `blah-code status`, inspect `blah-code logs`, then replay `blah-code events <sessionId>`.
+
+- daemon attach issues:
+run `blah-code status --attach <url>` and `blah-code logs --attach <url>` for remote targets.
 
 - repeated permission denials:
 inspect permission policy in `blah-code.json` and allowlist repetitive safe commands deliberately.
