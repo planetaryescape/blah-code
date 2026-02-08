@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/planetaryescape/blah-code/compare/cli-v0.6.2...cli-v0.7.0) (2026-02-08)
+
+
+### Features
+
+* refresh OpenTUI TUI UX ([8e39f8a](https://github.com/planetaryescape/blah-code/commit/8e39f8ade4b70780a7dc48848212784a4f3b65b9))
+* refresh OpenTUI TUI UX ([5df7605](https://github.com/planetaryescape/blah-code/commit/5df7605a91d66c86c4a429d1f80b35c3aaf9c1fc))
+
 ## [0.6.2](https://github.com/planetaryescape/blah-code/compare/cli-v0.6.1...cli-v0.6.2) (2026-02-08)
 
 
