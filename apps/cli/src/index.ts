@@ -121,14 +121,23 @@ function normalizeDaemonUrl(url: string): string {
   return url.replace(/\/$/, "");
 }
 
-function resolveDaemonAttachUrl(cwd: string, explicitAttach?: string): string {
-  if (explicitAttach) return normalizeDaemonUrl(explicitAttach);
-  if (process.env.BLAH_DAEMON_URL) return normalizeDaemonUrl(process.env.BLAH_DAEMON_URL);
+type DaemonAttachTarget = {
+  url: string;
+  source: "flag" | "env" | "config" | "local";
+};
+
+function resolveDaemonAttachTarget(cwd: string, explicitAttach?: string): DaemonAttachTarget {
+  if (explicitAttach) return { url: normalizeDaemonUrl(explicitAttach), source: "flag" };
+  if (process.env.BLAH_DAEMON_URL) {
+    return { url: normalizeDaemonUrl(process.env.BLAH_DAEMON_URL), source: "env" };
+  }
 
   const config = loadBlahCodeConfig(cwd);
-  if (config.daemon?.attachUrl) return normalizeDaemonUrl(config.daemon.attachUrl);
+  if (config.daemon?.attachUrl) {
+    return { url: normalizeDaemonUrl(config.daemon.attachUrl), source: "config" };
+  }
 
-  return resolveDaemonAddress(cwd).url;
+  return { url: resolveDaemonAddress(cwd).url, source: "local" };
 }
 
 function isLocalDaemonUrl(url: string): boolean {
@@ -309,7 +318,7 @@ program
       ? { url: opts.attach }
       : opts.host || opts.port
         ? resolveDaemonAddress(cwd, opts.host, opts.port)
-        : { url: resolveDaemonAttachUrl(cwd) };
+        : { url: resolveDaemonAttachTarget(cwd).url };
 
     const localApiKey =
       process.env.BLAH_API_KEY ?? loadBlahCodeApiKey() ?? loadBlahCliApiKey();
@@ -565,25 +574,55 @@ program.action(async () => {
   const cwd = opts.cwd ?? process.cwd();
   applyLogging(cwd);
 
-  const daemonUrl = resolveDaemonAttachUrl(cwd, opts.attach);
-  let resolvedAttachUrl = daemonUrl;
+  const target = resolveDaemonAttachTarget(cwd, opts.attach);
+  const localUrl = resolveDaemonAddress(cwd).url;
+  let resolvedAttachUrl = target.url;
   try {
-    const ensured = await ensureDaemonForTui(cwd, daemonUrl);
+    const ensured = await ensureDaemonForTui(cwd, target.url);
     resolvedAttachUrl = ensured.url;
     if (ensured.autoStarted) {
       console.log(`daemon auto-started: ${resolvedAttachUrl}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`failed to connect daemon: ${message}`);
-    console.error(`daemon url: ${daemonUrl}`);
-    console.error(`check: blah-code status --attach ${daemonUrl}`);
-    console.error(`logs: blah-code logs --attach ${daemonUrl}`);
-    if (isLocalDaemonUrl(daemonUrl)) {
-      console.error(`manual start: blah-code serve --cwd ${cwd}`);
+    if (target.source === "flag") {
+      console.error(`failed to connect daemon: ${message}`);
+      console.error(`daemon url: ${target.url}`);
+      console.error(`check: blah-code status --attach ${target.url}`);
+      console.error(`logs: blah-code logs --attach ${target.url}`);
+      process.exitCode = 1;
+      return;
     }
-    process.exitCode = 1;
-    return;
+
+    if (target.url !== localUrl) {
+      console.error(`daemon attach failed (${target.source}): ${target.url}`);
+      console.error("falling back to local managed daemon...");
+      try {
+        const local = await ensureDaemonForTui(cwd, localUrl);
+        resolvedAttachUrl = local.url;
+        if (local.autoStarted) {
+          console.log(`daemon auto-started: ${resolvedAttachUrl}`);
+        }
+      } catch (localError) {
+        const localMessage = localError instanceof Error ? localError.message : String(localError);
+        console.error(`failed to connect local daemon: ${localMessage}`);
+        console.error(`daemon url: ${localUrl}`);
+        console.error(`check: blah-code status --attach ${localUrl}`);
+        console.error(`logs: blah-code logs --attach ${localUrl}`);
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      console.error(`failed to connect daemon: ${message}`);
+      console.error(`daemon url: ${target.url}`);
+      console.error(`check: blah-code status --attach ${target.url}`);
+      console.error(`logs: blah-code logs --attach ${target.url}`);
+      if (isLocalDaemonUrl(target.url)) {
+        console.error(`manual start: blah-code serve --cwd ${cwd}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
   }
 
   await runTui({
