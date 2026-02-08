@@ -208,9 +208,6 @@ function TuiApp(props: TuiAppProps) {
 
     setError(null);
     setPrompt("");
-    if (inputRef && !inputRef.isDestroyed && typeof inputRef.clear === "function") {
-      inputRef.clear();
-    }
 
     if (value.startsWith("/")) {
       await handleCommand(value);
@@ -376,35 +373,22 @@ function TuiApp(props: TuiAppProps) {
       </box>
 
       <box flexDirection="column" border borderColor="#3f3f46" padding={1}>
-        <textarea
+        <input
           ref={(value: unknown) => {
             inputRef = value;
           }}
-          height={4}
-          placeholder="Prompt (Ctrl+Enter send, Ctrl+K palette, commands: /help /new /sessions /status /logs /model /quit)"
-          textColor="#e4e4e7"
-          focusedTextColor="#e4e4e7"
-          cursorColor="#93c5fd"
-          initialValue={prompt()}
-          onContentChange={() => {
-            setPrompt(typeof inputRef?.plainText === "string" ? inputRef.plainText : "");
-          }}
+          value={prompt()}
+          placeholder="Type message... (Enter send, /help commands)"
+          onInput={(value: string) => setPrompt(value)}
           onSubmit={() => {
             submitPrompt().catch((submitError) => {
               const message = submitError instanceof Error ? submitError.message : String(submitError);
               setError(message);
             });
           }}
-          keyBindings={[
-            {
-              name: "return",
-              ctrl: true,
-              action: "submit",
-            },
-          ]}
         />
         <text fg="#71717a">
-          ctrl+k palette · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
+          enter send · ctrl+k palette · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
         </text>
         <Show when={error()}>
           <text fg="#fca5a5">{error()}</text>
