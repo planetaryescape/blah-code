@@ -62,7 +62,8 @@ Create token (npm):
 2. `Account Settings` -> `Access Tokens`.
 3. `Generate New Token`.
 4. Choose token type:
-- preferred: `Granular Access Token`
+- preferred: `Automation` token (does not require OTP in CI)
+- acceptable fallback: `Granular Access Token` with publish rights
 5. For granular token set:
 - Packages and scopes: include `@blah-code`.
 - Permissions: `Read and write`.
@@ -76,6 +77,12 @@ Add as repo secret:
 2. `New repository secret`.
 3. Name: `NPM_TOKEN`.
 4. Value: npm token.
+
+Trusted publishing fallback:
+
+- release workflow also supports npm trusted publishing (OIDC) retry on OTP errors.
+- ensure repo workflow permission includes `id-token: write` (already configured in `release-cli.yml`).
+- if trusted publishing is not configured on npm package settings, CI still needs an automation token.
 
 ## token setup: HOMEBREW_TAP_TOKEN
 
@@ -137,8 +144,9 @@ Add as repo secret:
 - check workflow is on `main`.
 
 2. npm publish denied
-- check `NPM_TOKEN` not expired/revoked.
+- check `NPM_TOKEN` is an automation token (or valid and not expired/revoked).
 - check npm user is maintainer of `@blah-code`.
+- if error is `EOTP`, configure npm trusted publishing for this repo or replace token with automation token.
 
 3. Homebrew formula update fails
 - check `HOMEBREW_TAP_TOKEN` has `Contents: Read and write` on `homebrew-tap`.
