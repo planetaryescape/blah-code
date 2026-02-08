@@ -7,7 +7,7 @@
   },
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "bun --preload @opentui/solid/preload src/index.ts",
     "build": "bun run scripts/build.ts",
     "compile": "bun run scripts/compile.ts",
     "publish:npm": "bun run scripts/publish.ts",
@@ -17,9 +17,15 @@
   "dependencies": {
     "@blah-code/config": "workspace:*",
     "@blah-code/core": "workspace:*",
+    "@blah-code/daemon": "workspace:*",
+    "@blah-code/logger": "workspace:*",
     "@blah-code/session": "workspace:*",
     "@blah-code/tools": "workspace:*",
     "@blah-code/transport-blah": "workspace:*",
-    "commander": "^14.0.1"
+    "@opentui/core": "^0.1.74",
+    "@opentui/solid": "^0.1.72",
+    "commander": "^14.0.1",
+    "eventsource-parser": "^3.0.6",
+    "solid-js": "^1.9.0"
   }
 }

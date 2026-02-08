@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import solidPlugin from "@opentui/solid/bun-plugin";
 
 const DIST = resolve(import.meta.dirname, "../dist/release");
 const ENTRYPOINT = resolve(import.meta.dirname, "../src/index.ts");
@@ -72,6 +73,7 @@ for (const target of targets) {
 
   const result = await Bun.build({
     entrypoints: [ENTRYPOINT],
+    plugins: [solidPlugin],
     compile: {
       target: target.bunTarget as any,
       outfile,

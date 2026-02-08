@@ -1,5 +1,5 @@
 {
-  "name": "@blah-code/transport-blah",
+  "name": "@blah-code/logger",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",
@@ -8,9 +8,6 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
-    "@blah-code/logger": "workspace:*",
-    "conf": "^15.1.0",
-    "eventsource-parser": "^3.0.6",
-    "open": "^11.0.0"
+    "pino": "^9.9.0"
   }
 }

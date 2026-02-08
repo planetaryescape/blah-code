@@ -37,6 +37,12 @@ export BLAH_API_KEY=blah_xxx
 
 ## run locally
 
+Start interactive TUI:
+
+```bash
+bun run dev
+```
+
 Run one task:
 
 ```bash
@@ -46,13 +52,20 @@ bun run dev -- run "summarize this repository"
 Run daemon API:
 
 ```bash
-bun run dev:daemon
+bun run dev -- serve
 ```
 
 Health check:
 
 ```bash
 curl -s http://127.0.0.1:3789/health
+```
+
+Status and logs:
+
+```bash
+bun run dev -- status
+bun run dev -- logs --lines 200
 ```
 
 ## config
@@ -62,6 +75,17 @@ Create `blah-code.json` in your workspace:
 ```json
 {
   "model": "openai:gpt-5-mini",
+  "timeout": {
+    "modelMs": 120000
+  },
+  "logging": {
+    "level": "info",
+    "print": false
+  },
+  "daemon": {
+    "host": "127.0.0.1",
+    "port": 3789
+  },
   "permission": {
     "*": "ask",
     "read": "allow",
@@ -103,6 +127,9 @@ run `blah-code login` or set `BLAH_API_KEY`.
 
 - model calls failing:
 check `BLAH_BASE_URL` and verify API key validity.
+
+- run timeouts / blind failures:
+check `blah-code status`, inspect `blah-code logs`, then replay `blah-code events <sessionId>`.
 
 - repeated permission denials:
 inspect permission policy in `blah-code.json` and allowlist repetitive safe commands deliberately.

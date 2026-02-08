@@ -1,4 +1,5 @@
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { createLogger } from "@blah-code/logger";
 import Conf from "conf";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -22,6 +23,7 @@ export interface ModelTransport {
     modelId: string;
     tools: ToolSpec[];
     timeoutMs?: number;
+    onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }>;
 }
 
@@ -49,6 +51,8 @@ function normalizeBaseUrl(baseUrl?: string): string {
   return (baseUrl ?? "https://blah.chat").replace(/\/$/, "");
 }
 
+const logger = createLogger("transport.blah");
+
 export class BlahTransport implements ModelTransport {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -64,16 +68,34 @@ export class BlahTransport implements ModelTransport {
     return this.conversationId;
   }
 
-  private async cliRpc<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-    const res = await fetch(`${this.baseUrl}/api/v1/cli/rpc`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey,
-        authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ method, params }),
-    });
+  private async cliRpc<T>(
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs = 30000,
+  ): Promise<T> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/v1/cli/rpc`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": this.apiKey,
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ method, params }),
+        signal: ctrl.signal,
+      });
+    } catch (error) {
+      if (String(error).includes("AbortError") || String(error).includes("timeout")) {
+        throw new Error(`RPC ${method} timeout after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
 
     const json = (await res.json()) as CliRpcEnvelope<T>;
     if (!res.ok || json.status === "error") {
@@ -124,6 +146,7 @@ export class BlahTransport implements ModelTransport {
     modelId: string;
     tools: ToolSpec[];
     timeoutMs?: number;
+    onDelta?: (chunk: { text: string; done?: boolean }) => void;
   }): Promise<{ text: string }> {
     const conversationId = await this.ensureConversation(input.modelId);
     const prompt = this.renderPrompt(input.messages, input.tools);
@@ -134,16 +157,26 @@ export class BlahTransport implements ModelTransport {
       modelId: input.modelId,
     });
 
-    return await this.waitForAssistant(conversationId, sent.userMessageId, input.timeoutMs ?? 120000);
+    return await this.waitForAssistant(
+      conversationId,
+      sent.userMessageId,
+      input.timeoutMs ?? 120000,
+      input.onDelta,
+    );
   }
 
   private async waitForAssistant(
     conversationId: string,
     userMessageId: string,
     timeoutMs: number,
+    onDelta?: (chunk: { text: string; done?: boolean }) => void,
   ): Promise<{ text: string }> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort("timeout");
+    }, timeoutMs);
 
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/cli/messages/stream/${conversationId}`, {
@@ -164,6 +197,8 @@ export class BlahTransport implements ModelTransport {
       const decoder = new TextDecoder();
 
       let latestText = "";
+      let emittedText = "";
+      let streamError: Error | null = null;
       const parser = createParser({
         onEvent: (event: EventSourceMessage) => {
           if (!event.data) return;
@@ -175,12 +210,27 @@ export class BlahTransport implements ModelTransport {
             const assistants = messages.slice(userIndex + 1).filter((m) => m.role === "assistant");
             const last = assistants.at(-1);
             if (!last) return;
-            latestText = last.content || last.partialContent || latestText;
+            const incomingText = last.content || last.partialContent || latestText;
+            if (incomingText !== latestText) {
+              latestText = incomingText;
+            }
+
+            if (onDelta && latestText.length > 0) {
+              const chunk = latestText.startsWith(emittedText)
+                ? latestText.slice(emittedText.length)
+                : latestText;
+              if (chunk.length > 0) {
+                onDelta({ text: chunk, done: last.status === "complete" });
+              }
+              emittedText = latestText;
+            }
+
             if (last.status === "complete" && latestText.trim()) {
               ctrl.abort("done");
             }
             if (last.status === "error") {
-              throw new Error(last.content || "Assistant generation failed");
+              streamError = new Error(last.content || "Assistant generation failed");
+              ctrl.abort("error");
             }
           } catch {
             // ignore bad chunks
@@ -192,6 +242,9 @@ export class BlahTransport implements ModelTransport {
         const { done, value } = await reader.read();
         if (done) break;
         parser.feed(decoder.decode(value, { stream: true }));
+        if (streamError) {
+          throw streamError;
+        }
       }
 
       if (!latestText.trim()) {
@@ -199,6 +252,23 @@ export class BlahTransport implements ModelTransport {
       }
       return { text: latestText };
     } catch (err) {
+      if (timedOut) {
+        logger.warn({
+          conversationId,
+          userMessageId,
+          timeoutMs,
+        }, "model wait timed out");
+        const listed = await this.cliRpc<Array<{ _id: string; role: string; content?: string }>>("listMessages", {
+          conversationId,
+        }).catch(() => []);
+        const userIndex = listed.findIndex((m) => m._id === userMessageId);
+        const assistant = listed.slice(userIndex + 1).filter((m) => m.role === "assistant").at(-1);
+        if (assistant?.content?.trim()) {
+          return { text: assistant.content };
+        }
+        throw new Error(`Model response timeout after ${timeoutMs}ms`);
+      }
+
       if (String(err).includes("done") || String(err).includes("AbortError")) {
         const listed = await this.cliRpc<Array<{ _id: string; role: string; content?: string }>>("listMessages", {
           conversationId,
@@ -207,6 +277,11 @@ export class BlahTransport implements ModelTransport {
         const assistant = listed.slice(userIndex + 1).filter((m) => m.role === "assistant").at(-1);
         if (assistant?.content?.trim()) return { text: assistant.content };
       }
+      logger.error({
+        conversationId,
+        userMessageId,
+        error: err instanceof Error ? err.message : String(err),
+      }, "model wait failed");
       throw err;
     } finally {
       clearTimeout(timer);

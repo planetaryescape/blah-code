@@ -30,8 +30,10 @@ bun run dev -- login
 
 ```bash
 blah-code login
-blah-code run "summarize this repo"
+blah-code
 ```
+
+`blah-code` (no args) now opens the interactive TUI.
 
 Examples:
 
@@ -40,6 +42,9 @@ blah-code run "find auth bugs"
 blah-code run --model openai:gpt-5-mini "refactor this module"
 blah-code run --cwd /path/to/repo "add tests for parser"
 blah-code run --json "summarize changes since last commit"
+blah-code status
+blah-code logs --lines 200
+blah-code serve
 ```
 
 ## auth
@@ -65,6 +70,17 @@ Create in project root:
 ```json
 {
   "model": "openai:gpt-5-mini",
+  "timeout": {
+    "modelMs": 120000
+  },
+  "logging": {
+    "level": "info",
+    "print": false
+  },
+  "daemon": {
+    "host": "127.0.0.1",
+    "port": 3789
+  },
   "permission": {
     "*": "ask",
     "read": "allow",
@@ -86,10 +102,13 @@ Create in project root:
 ## daemon API
 
 - `GET /health`
+- `GET /v1/status`
+- `GET /v1/logs?lines=200`
 - `GET /v1/tools`
 - `GET /v1/permissions/rules`
 - `POST /v1/permissions/rules`
 - `POST /v1/sessions`
+- `GET /v1/sessions?limit=20`
 - `POST /v1/sessions/:id/prompt`
 - `GET /v1/sessions/:id/events`
 - `GET /v1/sessions/:id/events/stream`
@@ -101,8 +120,13 @@ Create in project root:
 Run daemon locally:
 
 ```bash
-bun run dev:daemon
+blah-code serve
 ```
+
+Runtime artifacts:
+
+- session DB: `~/.blah-code/sessions.db`
+- logs: `~/.blah-code/logs/current.log`
 
 ## docs
 

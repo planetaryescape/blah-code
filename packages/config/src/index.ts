@@ -15,6 +15,23 @@ const configSchema = z.object({
   model: z.string().optional(),
   permission: z.record(z.string(), z.unknown()).optional(),
   mcp: z.record(z.string(), mcpServerSchema).optional(),
+  timeout: z
+    .object({
+      modelMs: z.number().int().min(1000).max(600000),
+    })
+    .optional(),
+  logging: z
+    .object({
+      level: z.enum(["debug", "info", "warn", "error"]),
+      print: z.boolean().optional(),
+    })
+    .optional(),
+  daemon: z
+    .object({
+      port: z.number().int().min(1).max(65535),
+      host: z.string().min(1),
+    })
+    .optional(),
 });
 
 export type BlahCodeConfig = z.infer<typeof configSchema>;
