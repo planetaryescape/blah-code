@@ -112,7 +112,7 @@ export function EventTimeline(props: EventTimelineProps) {
               paddingRight={1}
               marginBottom={1}
             >
-              <text fg={item.variant === "error" ? "#fca5a5" : "#93c5fd"}>{item.variant === "error" ? "✕ " : "• "}</text>
+              <text fg={item.variant === "error" ? "#fca5a5" : "#93c5fd"}>{item.variant === "error" ? "x " : "- "}</text>
               <box flexDirection="column">
                 <text fg={item.color} attributes={1}>
                   {item.header}

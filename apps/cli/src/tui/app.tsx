@@ -410,20 +410,33 @@ function TuiApp(props: TuiAppProps) {
         paddingTop={1}
         paddingBottom={1}
       >
-        <input
-          ref={(value: unknown) => {
-            inputRef = value;
-          }}
-          value={prompt()}
-          placeholder="Ask anything... (Enter send, /help commands, Ctrl+K palette)"
-          onInput={(value: string) => setPrompt(value)}
-          onSubmit={() => {
-            submitPrompt().catch((submitError) => {
-              const message = submitError instanceof Error ? submitError.message : String(submitError);
-              setError(message);
-            });
-          }}
-        />
+        <box
+          flexDirection="row"
+          border
+          borderColor={running() ? "#f59e0b" : "#1e293b"}
+          backgroundColor="#020617"
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <text fg={running() ? "#fbbf24" : "#64748b"}>{"> "}</text>
+          <input
+            ref={(value: unknown) => {
+              inputRef = value;
+            }}
+            value={prompt()}
+            placeholder="Ask anything... (Enter send, /help commands, Ctrl+K palette)"
+            onInput={(value: string) => setPrompt(value)}
+            onSubmit={() => {
+              submitPrompt().catch((submitError) => {
+                const message = submitError instanceof Error ? submitError.message : String(submitError);
+                setError(message);
+              });
+            }}
+          />
+          <Show when={running()}>
+            <text fg="#fbbf24"> thinking...</text>
+          </Show>
+        </box>
         <text fg="#64748b">
           enter send · ctrl+k commands · ctrl+n new · ctrl+p prev · ctrl+shift+n next · ctrl+s status · ctrl+q quit
         </text>
